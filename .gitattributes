@@ -1,0 +1,11 @@
+# Git LFS tracking for large binary files
+*.a filter=lfs diff=lfs merge=lfs -text
+*.so filter=lfs diff=lfs merge=lfs -text
+*.aar filter=lfs diff=lfs merge=lfs -text
+*.dylib filter=lfs diff=lfs merge=lfs -text
+**/Libv2ray filter=lfs diff=lfs merge=lfs -text
+**/libv2ray filter=lfs diff=lfs merge=lfs -text
+ios/Frameworks/Libv2ray.xcframework/*/Libv2ray.framework/Libv2ray filter=lfs diff=lfs merge=lfs -text
+libs/ios/Libv2ray.xcframework/*/Libv2ray.framework/Libv2ray filter=lfs diff=lfs merge=lfs -text
+libs/ios/*/Libv2ray.framework/Libv2ray filter=lfs diff=lfs merge=lfs -text
+**/LibXray filter=lfs diff=lfs merge=lfs -text

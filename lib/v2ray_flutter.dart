@@ -46,11 +46,19 @@ class V2rayFlutter {
     }
   }
 
-  /// Stop V2Ray service (Gomobile)
+  /// Stop V2Ray service (Gomobile).
+  ///
+  /// Native может вернуть `bool` (новая iOS-обёртка 2026-05-12) или
+  /// `String` "SUCCESS"/"FAILED" (Android legacy + старый iOS). Обе
+  /// формы конвертируем в "SUCCESS"/"FAILED" для backward-compat
+  /// с вызывающим кодом (v2ray_state_service, v2ray_debug_service,
+  /// v2ray_runner).
   static Future<String> stopV2RayService() async {
     debugPrint('🛑 V2Ray: Stopping V2Ray service...');
     try {
-      final String result = await _channel.invokeMethod('stopV2Ray');
+      final dynamic raw = await _channel.invokeMethod('stopV2Ray');
+      final String result =
+          raw is bool ? (raw ? 'SUCCESS' : 'FAILED') : raw.toString();
       debugPrint('✅ V2Ray: Stop result: $result');
       return result;
     } catch (e) {
@@ -184,12 +192,18 @@ class V2rayFlutter {
     }
   }
 
-  /// Stop V2Ray (Legacy)
+  /// Stop V2Ray (Legacy).
+  ///
+  /// Native может вернуть `bool` (iOS после 2026-05-12) или `String`
+  /// "SUCCESS"/"FAILED" (Android + legacy iOS). Обе формы → `bool`.
   static Future<bool> stopV2Ray() async {
     debugPrint('🛑 V2Ray: Stopping V2Ray (Legacy)...');
     try {
-      final bool success = await _channel.invokeMethod('stopV2Ray');
-      debugPrint('✅ V2Ray: Stop result (Legacy): $success');
+      final dynamic raw = await _channel.invokeMethod('stopV2Ray');
+      final bool success = raw is bool
+          ? raw
+          : (raw is String ? raw == 'SUCCESS' : false);
+      debugPrint('✅ V2Ray: Stop result (Legacy): $success (raw=$raw)');
       return success;
     } catch (e) {
       debugPrint('❌ V2Ray: Error stopping V2Ray (Legacy): $e');

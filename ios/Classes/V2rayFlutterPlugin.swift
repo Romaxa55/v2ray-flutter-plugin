@@ -70,11 +70,18 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       }
 
     case "stopV2Ray":
+      // Возвращаем Bool (как Android), а не String — Dart-сторона
+      // (Future<bool> stopV2Ray) кастит результат и ловит TypeError
+      // на String. 2026-05-12: было `result("SUCCESS"/"FAILED")` →
+      // `type 'String' is not a subtype of type 'bool'`.
       do {
         let stopped = try coreController?.stopLoop() ?? false
-        result(stopped ? "SUCCESS" : "FAILED")
+        result(stopped)
       } catch {
-        result("FAILED: \(error.localizedDescription)")
+        // На ошибке возвращаем false — Dart воспримет как «stop не сработал»
+        // (например, V2Ray уже остановлен). Полный текст пишем в лог.
+        NSLog("[V2rayFlutter] stopV2Ray error: \(error.localizedDescription)")
+        result(false)
       }
 
     case "isV2RayRunning":

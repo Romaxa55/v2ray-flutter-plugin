@@ -12,12 +12,11 @@ class V2rayFlutter {
 
   // ========== Gomobile V2Ray Methods (New) ==========
 
-  /// Initialize V2Ray system (Gomobile)
+  /// Initialize V2Ray system (Gomobile).
+  /// Info-prints удалены 2026-05-12 — есть в [V2RAY_RUNNER] выше по стеку.
   static Future<String> initializeV2Ray() async {
-    debugPrint('🚀 V2Ray: Initializing V2Ray system...');
     try {
       final String result = await _channel.invokeMethod('initializeV2Ray');
-      debugPrint('✅ V2Ray: Initialization result: $result');
       return result;
     } catch (e) {
       debugPrint('❌ V2Ray: Error initializing V2Ray: $e');
@@ -25,20 +24,15 @@ class V2rayFlutter {
     }
   }
 
-  /// Start V2Ray with JSON configuration (Gomobile)
+  /// Start V2Ray with JSON configuration (Gomobile).
+  /// Config preview дублировал [CFG] блок — убрали.
   static Future<String> startV2RayWithConfig(
       Map<String, dynamic> config) async {
-    debugPrint('🚀 V2Ray: Starting V2Ray with config...');
     try {
-      String configJson = json.encode(config);
-      debugPrint('📋 V2Ray: Config JSON length: ${configJson.length} chars');
-      debugPrint(
-          '📋 V2Ray: Config preview: ${configJson.length > 200 ? configJson.substring(0, 200) + '...' : configJson}');
-
+      final String configJson = json.encode(config);
       final String result = await _channel.invokeMethod('startV2Ray', {
         'config': configJson,
       });
-      debugPrint('✅ V2Ray: Start result: $result');
       return result;
     } catch (e) {
       debugPrint('❌ V2Ray: Error starting V2Ray: $e');
@@ -50,16 +44,12 @@ class V2rayFlutter {
   ///
   /// Native может вернуть `bool` (новая iOS-обёртка 2026-05-12) или
   /// `String` "SUCCESS"/"FAILED" (Android legacy + старый iOS). Обе
-  /// формы конвертируем в "SUCCESS"/"FAILED" для backward-compat
-  /// с вызывающим кодом (v2ray_state_service, v2ray_debug_service,
-  /// v2ray_runner).
+  /// формы конвертируем в "SUCCESS"/"FAILED" для backward-compat.
   static Future<String> stopV2RayService() async {
-    debugPrint('🛑 V2Ray: Stopping V2Ray service...');
     try {
       final dynamic raw = await _channel.invokeMethod('stopV2Ray');
       final String result =
           raw is bool ? (raw ? 'SUCCESS' : 'FAILED') : raw.toString();
-      debugPrint('✅ V2Ray: Stop result: $result');
       return result;
     } catch (e) {
       debugPrint('❌ V2Ray: Error stopping V2Ray: $e');
@@ -69,10 +59,8 @@ class V2rayFlutter {
 
   /// Check if V2Ray is running (Gomobile)
   static Future<bool> isV2RayRunning() async {
-    debugPrint('🔍 V2Ray: Checking if V2Ray is running...');
     try {
       final bool running = await _channel.invokeMethod('isV2RayRunning');
-      debugPrint('🔍 V2Ray: Running status: $running');
       return running;
     } catch (e) {
       debugPrint('❌ V2Ray: Error checking V2Ray status: $e');
@@ -125,10 +113,8 @@ class V2rayFlutter {
 
   /// Cleanup V2Ray resources (Gomobile)
   static Future<String> cleanupV2Ray() async {
-    debugPrint('🧹 V2Ray: Cleaning up V2Ray resources...');
     try {
       final String result = await _channel.invokeMethod('cleanupV2Ray');
-      debugPrint('🧹 V2Ray: Cleanup result: $result');
       return result;
     } catch (e) {
       debugPrint('❌ V2Ray: Error cleaning up V2Ray: $e');

@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import Libv2ray
 
 // Используем CoreController класс из Libv2ray
 @objc protocol Libv2rayCoreCallbackHandler {
@@ -122,6 +123,24 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
     case "getStats":
       // Return empty stats - not implemented in iOS stub
       result([:] as [String: Any])
+
+    case "convertUrlToConfig":
+      // 2026-05-14: нативная конвертация vless://, vmess://, trojan://, ss://
+      // URL → JSON xray-config через xray-парсер. Заменяет ручной Dart-парсер
+      // (V2RayUrlParser ~600 строк) — теперь все streamSettings, tlsSettings,
+      // realitySettings и т.д. строит сам xray, без багов в Dart.
+      //
+      // Возвращает либо JSON string с outbounds[0] (готовый proxy outbound),
+      // либо строку начинающуюся с "FAILED: " при ошибке парсинга.
+      // Сам конвертер запускается в main app process (не в NE), т.к. это
+      // чисто Go-функция парсинга, не запускающая xray-core.
+      guard let args = call.arguments as? [String: Any],
+            let url = args["url"] as? String else {
+        result(FlutterError(code: "INVALID_ARGS", message: "Missing url", details: nil))
+        return
+      }
+      let json = Libv2rayConvertUrlToConfig(url) ?? "FAILED: nil result"
+      result(json)
 
     default:
       result(FlutterMethodNotImplemented)

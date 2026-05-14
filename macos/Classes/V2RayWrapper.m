@@ -267,6 +267,28 @@ static int savedStdout = -1;
     NSLog(@"✅ [V2RAY_WRAPPER] Stdout redirect stopped");
 }
 
+// 2026-05-14: нативная конвертация share-URL → JSON xray-config.
+// Заменяет ручной Dart-парсер. Go-функция в libv2ray.a:
+// extern char* ConvertUrlToConfig(char* url);
++ (NSString *)convertUrlToConfig:(NSString *)url {
+    const char *cUrl = [url UTF8String];
+    if (cUrl == NULL) {
+        return @"FAILED: url is NULL";
+    }
+    char *mutableUrl = strdup(cUrl);
+    if (mutableUrl == NULL) {
+        return @"FAILED: strdup failed";
+    }
+    char *resultPtr = ConvertUrlToConfig(mutableUrl);
+    free(mutableUrl);
+    if (resultPtr == NULL) {
+        return @"FAILED: ConvertUrlToConfig returned NULL";
+    }
+    NSString *json = [NSString stringWithUTF8String:resultPtr];
+    free(resultPtr);  // Go выделил через C.CString — обязательно free.
+    return json ?: @"FAILED: utf8 decode";
+}
+
 + (void)stdoutDataAvailable:(NSNotification *)notification {
     NSData *data = [[notification userInfo] objectForKey:NSFileHandleNotificationDataItem];
 

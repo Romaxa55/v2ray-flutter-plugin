@@ -40,6 +40,43 @@ class V2rayFlutter {
     }
   }
 
+  /// Convert share URL → xray JSON config через нативный xray-парсер.
+  ///
+  /// 2026-05-14: заменяет ручной Dart-парсер (`V2RayUrlParser`, ~600 строк).
+  /// libxray дёргает `share.ConvertShareLinksToXrayJson` — поддерживает
+  /// `vless://`, `vmess://`, `trojan://`, `ss://`, `ss2022`, v2rayN-bundle.
+  ///
+  /// Возвращает Map с полным xray Config (`outbounds[0]` — нужный proxy
+  /// outbound со всеми streamSettings, tlsSettings, realitySettings,
+  /// sockopt). Если парсер не смог — возвращает `null` + debug-лог.
+  ///
+  /// Использование на стороне MegaV/7VPN:
+  /// ```dart
+  /// final cfg = await V2rayFlutter.convertUrlToConfig(decryptedUrl);
+  /// final proxyOutbound = (cfg?['outbounds'] as List?)?.firstOrNull;
+  /// // proxyOutbound — готовый outbound для нашего конфига.
+  /// ```
+  static Future<Map<String, dynamic>?> convertUrlToConfig(String url) async {
+    try {
+      final String raw = await _channel.invokeMethod('convertUrlToConfig', {
+        'url': url,
+      });
+      if (raw.startsWith('FAILED:')) {
+        debugPrint('[V2RAY] convertUrlToConfig failed: $raw');
+        return null;
+      }
+      final decoded = json.decode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        debugPrint('[V2RAY] convertUrlToConfig: unexpected type');
+        return null;
+      }
+      return decoded;
+    } catch (e) {
+      debugPrint('❌ V2Ray: convertUrlToConfig error: $e');
+      return null;
+    }
+  }
+
   /// Stop V2Ray service (Gomobile).
   ///
   /// Native может вернуть `bool` (новая iOS-обёртка 2026-05-12) или

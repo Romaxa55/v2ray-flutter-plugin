@@ -17,6 +17,12 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)cleanup;
 + (int)getActiveServerIndex;
 
+// 2026-05-14: нативная конвертация share-URL → JSON xray-config.
+// Возвращает либо JSON string, либо строку начинающуюся с "FAILED: "
+// при ошибке парсинга. Реализация в Go (libv2ray.a, c-archive),
+// смотри libXray/libv2ray_cgo/libxray_cgo.go.
++ (NSString *)convertUrlToConfig:(NSString *)url;
+
 @end
 
 NS_ASSUME_NONNULL_END

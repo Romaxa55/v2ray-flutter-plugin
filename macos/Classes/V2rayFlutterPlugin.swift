@@ -82,6 +82,16 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       let index = V2RayWrapper.getActiveServerIndex()
       result(index)
 
+    case "convertUrlToConfig":
+      // 2026-05-14: see iOS V2rayFlutterPlugin.swift comment.
+      guard let args = call.arguments as? [String: Any],
+            let url = args["url"] as? String else {
+        result("FAILED: missing url argument")
+        return
+      }
+      let json = V2RayWrapper.convertUrlToConfig(url)
+      result(json)
+
     default:
       result(FlutterMethodNotImplemented)
     }

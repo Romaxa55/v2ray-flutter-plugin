@@ -296,6 +296,30 @@ class V2rayFlutterPlugin: FlutterPlugin, MethodCallHandler {
         }
       }
 
+      // 2026-05-15: нативная конвертация share-URL (vless://, vmess://,
+      // trojan://, ss://) → JSON xray-config через xray-core парсер.
+      // Заменяет хрупкий Dart-парсер V2RayUrlParser. Симметрично iOS
+      // (Libv2rayConvertUrlToConfig) и macOS (V2RayWrapper.convertUrlToConfig).
+      //
+      // Возвращает JSON-строку с outbounds или строку начинающуюся с
+      // "FAILED: " при ошибке парсинга. Dart-сторона
+      // (V2rayFlutter.convertUrlToConfig) ловит prefix FAILED и
+      // возвращает null.
+      "convertUrlToConfig" -> {
+        try {
+          val url = call.argument<String>("url")
+          if (url == null) {
+            result.success("FAILED: missing url argument")
+            return
+          }
+          val json = Libv2ray.convertUrlToConfig(url)
+          result.success(json ?: "FAILED: convertUrlToConfig returned null")
+        } catch (e: Exception) {
+          Log.e(TAG, "❌ convertUrlToConfig failed: ${e.message}")
+          result.success("FAILED: ${e.message}")
+        }
+      }
+
       else -> {
         Log.w(TAG, "⚠️ Unknown V2Ray method called: ${call.method}")
         result.notImplemented()

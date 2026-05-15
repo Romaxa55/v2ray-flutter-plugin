@@ -37,6 +37,15 @@ flutter:
         pluginClass: V2rayFlutterPlugin
       ios:
         pluginClass: V2rayFlutterPlugin
+      # 2026-05-15: Android-секция была пропущена → Flutter не регистрировал
+      # V2rayFlutterPlugin (Kotlin) и Dart получал MissingPluginException
+      # для convertUrlToConfig / initializeV2Ray / startV2Ray и т.п.
+      # Класс лежит по пути
+      #   v2ray_flutter/android/src/main/kotlin/com/example/v2ray_flutter/V2rayFlutterPlugin.kt
+      # namespace com.example.v2ray_flutter (см. android/build.gradle).
+      android:
+        package: com.example.v2ray_flutter
+        pluginClass: V2rayFlutterPlugin
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:

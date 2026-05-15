@@ -52,7 +52,9 @@ android {
     dependencies {
         implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
         implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
-        implementation 'io.flutter:flutter_embedding_release:1.0.0-f21f1b5a6fdd7eb526aa3b50c066f5ea51ee8b08'
+        // 2026-05-15: убран хардкод flutter_embedding_release —
+        // эта артефакт-версия удалена из Maven. Современный Flutter плагин
+        // получает embedding через flutter.gradle автоматически.
     }
 
     testOptions {

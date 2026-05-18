@@ -19,3 +19,21 @@
 .packages
 .pub-cache/
 pubspec.lock
+
+# iOS/macOS simulator + maccatalyst + macos xcframework targets — собираются
+# локально (см. libXray submodule + libv2ray submodule). Их fat-бинари
+# 151-171MB превышают GitHub file size limit (100MB), и заводить их в
+# Git LFS нет смысла: simulator/maccatalyst/macos нужны только при
+# локальной разработке, не для production-сборки device-таргетов.
+#
+# Что остаётся в git: только ios-arm64 (device) — он 77-87MB и через LFS.
+ios/Frameworks/LibXray.xcframework/ios-arm64_x86_64-simulator/
+ios/Frameworks/LibXray.xcframework/ios-arm64_x86_64-maccatalyst/
+ios/Frameworks/LibXray.xcframework/macos-arm64_x86_64/
+ios/Frameworks/Libv2ray.xcframework/ios-arm64_x86_64-simulator/
+ios/Frameworks/Libv2ray.xcframework/ios-arm64_x86_64-maccatalyst/
+ios/Frameworks/Libv2ray.xcframework/macos-arm64_x86_64/
+libs/ios/Libv2ray.xcframework/ios-arm64_x86_64-simulator/
+libs/ios/Libv2ray.xcframework/ios-arm64_x86_64-maccatalyst/
+libs/ios/Libv2ray.xcframework/macos-arm64_x86_64/
+libs/ios/ios-arm64_x86_64-simulator/

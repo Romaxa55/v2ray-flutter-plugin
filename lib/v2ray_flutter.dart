@@ -135,6 +135,59 @@ class V2rayFlutter {
     }
   }
 
+  /// ProbeOutbound — honest HTTP-probe через конкретный outbound в работающем
+  /// xray-инстансе. Использует session.SetForcedOutboundTagToContext в нативке
+  /// для принудительной маршрутизации, ИГНОРИРУЯ balancer/routing rules.
+  ///
+  /// Возвращает Map с полями:
+  ///   - outbound_tag : str  — имя outbound который пробивался
+  ///   - target_url   : str
+  ///   - alive        : bool — HTTP 2xx/3xx ответ получен
+  ///   - http_code    : int? — HTTP-код (если не было ошибки на dial)
+  ///   - rtt_ms       : int  — общее время с момента dial до ответа
+  ///   - body_excerpt : str? — первые 512 байт body (для парсинга exit_ip/asn)
+  ///   - error        : str? — описание ошибки если probe не прошёл
+  ///   - timestamp_ms : int  — unix-время начала probe
+  ///
+  /// Memory: ~1.5 MB на active probe — безопасно для iOS NE jetsam 50MB cap.
+  ///
+  /// Пример: проверить server-15 через ip.megav.app/whoami:
+  /// ```dart
+  /// final r = await V2rayFlutter.probeOutbound(
+  ///   tag: 'server-15',
+  ///   url: 'https://ip.megav.app/',
+  ///   timeoutMs: 5000,
+  /// );
+  /// if (r['alive'] == true) {
+  ///   debugPrint('exit through ${r['body_excerpt']}');
+  /// }
+  /// ```
+  static Future<Map<String, dynamic>?> probeOutbound({
+    required String tag,
+    required String url,
+    int timeoutMs = 5000,
+  }) async {
+    try {
+      final String raw = await _channel.invokeMethod('probeOutbound', {
+        'tag': tag,
+        'url': url,
+        'timeoutMs': timeoutMs,
+      });
+      if (raw.isEmpty) return null;
+      final Map<String, dynamic> result =
+          json.decode(raw) as Map<String, dynamic>;
+      return result;
+    } catch (e) {
+      debugPrint('❌ V2Ray: probeOutbound failed for tag=$tag: $e');
+      return {
+        'outbound_tag': tag,
+        'target_url': url,
+        'alive': false,
+        'error': e.toString(),
+      };
+    }
+  }
+
   /// Get V2Ray status (Gomobile)
   static Future<String> getV2RayStatus() async {
     debugPrint('📊 V2Ray: Getting V2Ray status...');

@@ -111,6 +111,30 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
         result("FAILED: \(error.localizedDescription)")
       }
 
+    case "probeOutbound":
+      // Honest HTTP-probe через конкретный outbound в работающем xray-инстансе.
+      // Использует session.SetForcedOutboundTagToContext внутри Libv2ray для
+      // принудительной маршрутизации, ИГНОРИРУЯ balancer/routing rules.
+      //
+      // Args: tag(String), url(String), timeoutMs(Int)
+      // Returns: JSON-string из xray.ProbeOutboundResult (см. libXray/xray/probe_outbound.go)
+      //
+      // Memory: ~1.5 MB на active probe — безопасно для NE jetsam 50MB cap.
+      guard let args = call.arguments as? [String: Any],
+            let tag = args["tag"] as? String,
+            let url = args["url"] as? String else {
+        result(FlutterError(code: "INVALID_ARGS",
+                            message: "Missing tag/url for probeOutbound",
+                            details: nil))
+        return
+      }
+      let timeoutMs = (args["timeoutMs"] as? Int) ?? 5000
+
+      // Libv2rayProbeOutbound — gomobile-binding из libv2ray/libv2ray.go
+      // Сигнатура: func Libv2rayProbeOutbound(outboundTag, targetURL string, timeoutMs int) string
+      let json = Libv2rayProbeOutbound(tag, url, timeoutMs)
+      result(json)
+
     case "cleanupV2Ray":
       coreController = nil
       isInitialized = false

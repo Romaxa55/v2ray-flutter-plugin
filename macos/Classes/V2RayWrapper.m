@@ -289,6 +289,37 @@ static int savedStdout = -1;
     return json ?: @"FAILED: utf8 decode";
 }
 
+// 2026-05-18: honest HTTP-probe через указанный outbound.
+// Go-функция в libv2ray.a (libv2ray_cgo/libxray_cgo.go):
+// extern char* ProbeOutbound(char* outboundTag, char* targetURL, int timeoutMs);
++ (NSString *)probeOutbound:(NSString *)outboundTag
+                        url:(NSString *)targetURL
+                  timeoutMs:(int)timeoutMs {
+    const char *cTag = [outboundTag UTF8String];
+    const char *cUrl = [targetURL UTF8String];
+    if (cTag == NULL || cUrl == NULL) {
+        return @"FAILED: tag or url is NULL";
+    }
+    // strdup чтобы дать Go ownership этой памяти (он не модифицирует, но
+    // signature требует non-const)
+    char *mutableTag = strdup(cTag);
+    char *mutableUrl = strdup(cUrl);
+    if (mutableTag == NULL || mutableUrl == NULL) {
+        if (mutableTag) free(mutableTag);
+        if (mutableUrl) free(mutableUrl);
+        return @"FAILED: strdup failed";
+    }
+    char *resultPtr = ProbeOutbound(mutableTag, mutableUrl, timeoutMs);
+    free(mutableTag);
+    free(mutableUrl);
+    if (resultPtr == NULL) {
+        return @"FAILED: ProbeOutbound returned NULL";
+    }
+    NSString *json = [NSString stringWithUTF8String:resultPtr];
+    free(resultPtr);  // Go выделил через C.CString — обязательно free.
+    return json ?: @"FAILED: utf8 decode";
+}
+
 + (void)stdoutDataAvailable:(NSNotification *)notification {
     NSData *data = [[notification userInfo] objectForKey:NSFileHandleNotificationDataItem];
 

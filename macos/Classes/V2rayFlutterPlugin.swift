@@ -56,6 +56,25 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       let running = V2RayWrapper.isRunning()
       result(running ? "SUCCESS" : "FAILED: V2Ray not running")
 
+    case "probeOutbound":
+      // 2026-05-18: honest HTTP-probe через конкретный outbound в работающем
+      // xray-инстансе через libv2ray.a (c-archive). Использует
+      // session.SetForcedOutboundTagToContext для принудительной маршрутизации.
+      //
+      // Args: tag(String), url(String), timeoutMs(Int)
+      // Returns: JSON-string (см. libXray/xray/probe_outbound.go::ProbeOutboundResult)
+      guard let args = call.arguments as? [String: Any],
+            let tag = args["tag"] as? String,
+            let url = args["url"] as? String else {
+        result(FlutterError(code: "INVALID_ARGS",
+                            message: "Missing tag/url for probeOutbound",
+                            details: nil))
+        return
+      }
+      let timeoutMs = Int32((args["timeoutMs"] as? Int) ?? 5000)
+      let json = V2RayWrapper.probeOutbound(tag, url: url, timeoutMs: timeoutMs)
+      result(json)
+
     case "cleanupV2Ray":
       V2RayWrapper.cleanup()
       result("SUCCESS")
@@ -84,12 +103,17 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
 
     case "convertUrlToConfig":
       // 2026-05-14: see iOS V2rayFlutterPlugin.swift comment.
+      // Swift import ObjC: 'convertUrlToConfig:' → convertUrl(toConfig:)
+      // (это стандартная Apple's "first selector word ends with preposition"
+      // renaming — обычный метод обозвался криво, поэтому либо переименовать
+      // в Objc на 'convertShareLinkToXrayConfig:', либо использовать имя
+      // которое Swift импортирует).
       guard let args = call.arguments as? [String: Any],
             let url = args["url"] as? String else {
         result("FAILED: missing url argument")
         return
       }
-      let json = V2RayWrapper.convertUrlToConfig(url)
+      let json = V2RayWrapper.convertUrl(toConfig: url)
       result(json)
 
     default:

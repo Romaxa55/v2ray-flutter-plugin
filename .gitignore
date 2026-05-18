@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Gradle build artifacts (Android plugin + example)
+.gradle/
+**/.gradle/
+**/build/
+
+# IDE
+.idea/
+*.iml
+
+# Backup-файлы редакторов
+*.bak
+*.bak_*
+
+# Dart/Flutter
+.dart_tool/
+.packages
+.pub-cache/
+pubspec.lock

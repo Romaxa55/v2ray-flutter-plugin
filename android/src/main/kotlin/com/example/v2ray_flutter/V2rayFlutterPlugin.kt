@@ -159,21 +159,19 @@ class V2rayFlutterPlugin: FlutterPlugin, MethodCallHandler {
 
       "probeOutbound" -> {
         // 2026-05-18: honest HTTP-probe через конкретный outbound в работающем
-        // xray-инстансе. Использует session.SetForcedOutboundTagToContext в
-        // libXray.aar для принудительной маршрутизации, ИГНОРИРУЯ
-        // balancer/routing rules.
+        // xray-инстансе. Использует session.SetForcedOutboundTagToContext для
+        // принудительной маршрутизации, ИГНОРИРУЯ balancer/routing rules.
         //
-        // ВНИМАНИЕ — используем LibXray (root-обвертка), а НЕ Libv2ray
-        // (compat-shim). Это другой Java package: import libXray.LibXray.
-        // Compat-shim libv2ray не содержит probeOutbound на Android, потому
-        // что подпакет libXray/libv2ray импортирует root как main package,
-        // что не поддерживается gomobile для отдельной AAR-сборки.
-        // См. libXray/xray_wrapper.go::ProbeOutbound — root wrapper.
+        // Реализация: libXray/libv2ray/libv2ray.go::ProbeOutbound — тонкая
+        // обёртка над root libxray.ProbeOutbound (xray/probe_outbound.go).
+        // Compat-shim экспортирует её под тем же пакетом libv2ray, поэтому
+        // на Android используем единый AAR (compat-shim, gomobile-bind с
+        // подпакета ./libv2ray) — root libXray.aar отдельно не подключаем,
+        // иначе ловим duplicate go.Seq / разные libgojni.so в одном APK.
         //
         // Sanity-clamp timeoutMs:
         //   - MethodChannel может передать Int или Long в зависимости от Dart-side
         //   - clamping в [100ms, 60000ms] предохраняет от user-передачи мусора
-        //   - .toLong() финальная конвертация: gomobile signature принимает long
         //
         // Args: tag(String), url(String), timeoutMs(Int|Long в [100, 60000])
         // Returns: JSON string (см. libXray/xray/probe_outbound.go::ProbeOutboundResult)
@@ -189,12 +187,10 @@ class V2rayFlutterPlugin: FlutterPlugin, MethodCallHandler {
             result.error("INVALID_ARGS", "Missing tag/url for probeOutbound", null)
             return@onMethodCall
           }
-          // clamp [100, 60_000]ms
+          // clamp [100, 60_000]ms; gomobile биндит Go int → Java long на 64-bit.
           val timeoutMs = rawTimeout.coerceIn(100L, 60_000L)
 
-          // libXray.LibXray.probeOutbound — gomobile-binding из xray_wrapper.go::ProbeOutbound
-          // Сигнатура: probeOutbound(String, String, long) → String
-          val json = libXray.LibXray.probeOutbound(tag, url, timeoutMs)
+          val json = Libv2ray.probeOutbound(tag, url, timeoutMs)
           if (json.isNullOrEmpty()) {
             result.success(
               """{"outbound_tag":"$tag","target_url":"$url","alive":false,"error":"empty response"}"""

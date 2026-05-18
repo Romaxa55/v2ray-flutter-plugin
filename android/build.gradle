@@ -50,7 +50,13 @@ android {
     }
 
     dependencies {
-        implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
+        // 2026-05-18: api (не implementation) для libs/*.aar — чтобы
+        // libv2ray.Libv2ray transitive экспортировался в app-модуль.
+        // MainActivity.kt в vpn_native_client напрямую импортирует
+        // libv2ray.Libv2ray (см. convertUrlToConfig delegate, MainActivity:481).
+        // Без api-экспорта получаем Unresolved reference 'Libv2ray' в
+        // app:compileApkDebugKotlin.
+        api fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
         implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
         // 2026-05-15: убран хардкод flutter_embedding_release —
         // эта артефакт-версия удалена из Maven. Современный Flutter плагин

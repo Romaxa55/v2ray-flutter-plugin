@@ -295,23 +295,21 @@ static int savedStdout = -1;
 + (NSString *)probeOutbound:(NSString *)outboundTag
                         url:(NSString *)targetURL
                   timeoutMs:(int)timeoutMs {
+    // P2-3 (2026-05-18): strdup убраны — [NSString UTF8String] возвращает
+    // указатель валидный на время autorelease pool, а ProbeOutbound() синхронный
+    // и возвращает результат ДО освобождения pool. Go-side cgo не модифицирует
+    // входные char*, только читает (создаёт свои GoString копии).
+    // Это убирает 2 malloc/free × 20 probe × 1мин = ~57600 ненужных аллокаций
+    // в день (zero-leak но GC pressure).
+    //
+    // signature ProbeOutbound принимает `char*` (не `const char*`) только
+    // из-за того что cgo-генератор не умеет const. Cast через (char*) — OK.
     const char *cTag = [outboundTag UTF8String];
     const char *cUrl = [targetURL UTF8String];
     if (cTag == NULL || cUrl == NULL) {
         return @"FAILED: tag or url is NULL";
     }
-    // strdup чтобы дать Go ownership этой памяти (он не модифицирует, но
-    // signature требует non-const)
-    char *mutableTag = strdup(cTag);
-    char *mutableUrl = strdup(cUrl);
-    if (mutableTag == NULL || mutableUrl == NULL) {
-        if (mutableTag) free(mutableTag);
-        if (mutableUrl) free(mutableUrl);
-        return @"FAILED: strdup failed";
-    }
-    char *resultPtr = ProbeOutbound(mutableTag, mutableUrl, timeoutMs);
-    free(mutableTag);
-    free(mutableUrl);
+    char *resultPtr = ProbeOutbound((char *)cTag, (char *)cUrl, timeoutMs);
     if (resultPtr == NULL) {
         return @"FAILED: ProbeOutbound returned NULL";
     }

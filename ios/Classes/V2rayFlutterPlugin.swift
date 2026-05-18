@@ -120,6 +120,13 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       // Returns: JSON-string из xray.ProbeOutboundResult (см. libXray/xray/probe_outbound.go)
       //
       // Memory: ~1.5 MB на active probe — безопасно для NE jetsam 50MB cap.
+      //
+      // P1-async (2026-05-18): вызов вынесен в DispatchQueue.global() —
+      // Libv2rayProbeOutbound СИНХРОННЫЙ (блокирует до получения HTTP-ответа,
+      // до timeout). При Dart-side Future.wait([20 probes × 5s]) на main
+      // platform thread это **замораживает UI Flutter на 5+ секунд worst case**.
+      // Background-очередь снимает блокировку, result(...) обратно
+      // диспатчится на main thread (FlutterMethodCallHandler требует).
       guard let args = call.arguments as? [String: Any],
             let tag = args["tag"] as? String,
             let url = args["url"] as? String else {
@@ -130,10 +137,14 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       }
       let timeoutMs = (args["timeoutMs"] as? Int) ?? 5000
 
-      // Libv2rayProbeOutbound — gomobile-binding из libv2ray/libv2ray.go
-      // Сигнатура: func Libv2rayProbeOutbound(outboundTag, targetURL string, timeoutMs int) string
-      let json = Libv2rayProbeOutbound(tag, url, timeoutMs)
-      result(json)
+      DispatchQueue.global(qos: .userInitiated).async {
+        // Libv2rayProbeOutbound — gomobile-binding из libv2ray/libv2ray.go
+        // Сигнатура: func Libv2rayProbeOutbound(outboundTag, targetURL string, timeoutMs int) string
+        let json = Libv2rayProbeOutbound(tag, url, timeoutMs)
+        DispatchQueue.main.async {
+          result(json)
+        }
+      }
 
     case "cleanupV2Ray":
       coreController = nil

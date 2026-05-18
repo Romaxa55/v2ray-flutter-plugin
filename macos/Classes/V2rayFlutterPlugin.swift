@@ -63,6 +63,14 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       //
       // Args: tag(String), url(String), timeoutMs(Int)
       // Returns: JSON-string (см. libXray/xray/probe_outbound.go::ProbeOutboundResult)
+      //
+      // P1-async (2026-05-18): вызов синхронный (блокирует до HTTP-ответа
+      // или timeout). На macOS FlutterMethodCallHandler по умолчанию
+      // на main thread, при Future.wait([20 probes]) — UI freeze.
+      // Background-очередь + main-dispatch для result.
+      //
+      // P2: sanity-clamp timeoutMs в [100, 60000]ms — без этого передача
+      // отрицательного или большого Int в Int32 может вызвать Swift trap.
       guard let args = call.arguments as? [String: Any],
             let tag = args["tag"] as? String,
             let url = args["url"] as? String else {
@@ -71,9 +79,15 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
                             details: nil))
         return
       }
-      let timeoutMs = Int32((args["timeoutMs"] as? Int) ?? 5000)
-      let json = V2RayWrapper.probeOutbound(tag, url: url, timeoutMs: timeoutMs)
-      result(json)
+      let raw = (args["timeoutMs"] as? Int) ?? 5000
+      let timeoutMs = Int32(clamping: max(100, min(raw, 60_000)))
+
+      DispatchQueue.global(qos: .userInitiated).async {
+        let json = V2RayWrapper.probeOutbound(tag, url: url, timeoutMs: timeoutMs)
+        DispatchQueue.main.async {
+          result(json)
+        }
+      }
 
     case "cleanupV2Ray":
       V2RayWrapper.cleanup()

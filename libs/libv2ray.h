@@ -97,6 +97,16 @@ extern char* CleanupV2Ray(void);
 extern void Free(char* ptr);
 extern char* ForceGC(void);
 
+// 2026-05-19: добавлены вручную, потому что cgo-header был сгенерирован ДО
+// этих функций в libxray_cgo.go. Свежий libv2ray.a их содержит
+// (verified: nm -arch arm64 → __cgoexp_*_ProbeOutbound, *_ConvertUrlToConfig),
+// но header протух. Альтернатива — пересборка через
+// `go build -buildmode=c-archive -o libv2ray.a github.com/xtls/libxray/libv2ray_cgo`,
+// но declarations совпадают с //export-сигнатурами в
+// libXray/libv2ray_cgo/libxray_cgo.go:165 и :204.
+extern char* ProbeOutbound(char* outboundTag, char* targetURL, int timeoutMs);
+extern char* ConvertUrlToConfig(char* url);
+
 #ifdef __cplusplus
 }
 #endif

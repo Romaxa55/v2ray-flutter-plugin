@@ -318,6 +318,33 @@ static int savedStdout = -1;
     return json ?: @"FAILED: utf8 decode";
 }
 
+// Проверяем нужно ли скипать строку xray-вывода. Xray валит:
+//   - [Warning] common/errors: The feature WebSocket transport ... is deprecated
+//     (на каждый ws-outbound, ~50 строк на 20 серверов)
+//   - [Warning] common/errors: The feature gRPC transport ... is deprecated
+//   - from tcp/udp 127.0.0.1:NNNN accepted ... [main-socks -> server-N]
+//     (xray access-log, на каждое подключение — десятки/сек)
+//   - UDP:1.1.1.1:53 got answer / cache HIT
+//     (DNS-кеш xray, тоже спамит)
+// Эти строки полезны ТОЛЬКО при глубокой отладке. По умолчанию глушим.
++ (BOOL)shouldSuppressXrayLine:(NSString *)line {
+    // Deprecated warnings — никогда не полезны, серверы всё равно работают
+    if ([line containsString:@"is deprecated, not recommended for using"]) {
+        return YES;
+    }
+    // Access-log per-connection (sniff/route trace) — десятки в секунду
+    if ([line containsString:@"accepted tcp:"] ||
+        [line containsString:@"accepted udp:"]) {
+        return YES;
+    }
+    // DNS-кеш xray — нерелевантно для пользовательской диагностики
+    if ([line containsString:@"got answer:"] ||
+        [line containsString:@"cache HIT:"]) {
+        return YES;
+    }
+    return NO;
+}
+
 + (void)stdoutDataAvailable:(NSNotification *)notification {
     NSData *data = [[notification userInfo] objectForKey:NSFileHandleNotificationDataItem];
 
@@ -325,14 +352,16 @@ static int savedStdout = -1;
         NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 
         if (output) {
-            // Перенаправляем вывод в NSLog чтобы он отображался в консоли
-            NSLog(@"%@", output);
-
-            // Разбиваем на строки и обрабатываем каждую
+            // Фильтруем построчно — печатаем в NSLog только содержательные
+            // строки (ошибки/предупреждения которые не от deprecated и не
+            // от access-log/DNS-кеша). appendLogLine оставляем для всех,
+            // потому что parser для [server-N] хочет видеть полный поток.
             NSArray *lines = [output componentsSeparatedByString:@"\n"];
             for (NSString *line in lines) {
-                if (line.length > 0) {
-                    [self appendLogLine:line];
+                if (line.length == 0) continue;
+                [self appendLogLine:line];
+                if (![self shouldSuppressXrayLine:line]) {
+                    NSLog(@"%@", line);
                 }
             }
         }

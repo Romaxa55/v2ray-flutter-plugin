@@ -60,6 +60,32 @@ FOUNDATION_EXPORT NSString* _Nonnull Libv2rayForceGC(void);
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayGetMemoryStats(void);
 
 /**
+ * GetObservatoryState — snapshot текущего состояния burstObservatory:
+alive/dead/RTT для всех outbound'ов из subjectSelector. Внутренний
+доступ к xray-instance, никаких внешних HTTP запросов.
+
+Returns JSON-строку с полями:
+  nodes[]:{tag,alive,delay_ms,ping_all,ping_fail,ping_avg,ping_max,
+           ping_min,ping_deviation,last_error,last_seen_ms,last_try_ms}
+  timestamp_ms
+  error (если что-то пошло не так)
+
+Winner balancer'а Dart считает сам: min(delay_ms) среди alive=true.
+
+Использование Dart (через v2ray_flutter MethodChannel):
+  final s = await V2Ray.getObservatoryState();
+  for (final n in s['nodes']) {
+    debugPrint('${n['tag']}: alive=${n['alive']} rtt=${n['delay_ms']}ms');
+  }
+
+requestJSON — зарезервирован под будущие расширения (фильтрация по
+тегам, например). Сейчас можно передавать "" — игнорируется.
+
+Подробности реализации: см. xray/observatory_state.go.
+ */
+FOUNDATION_EXPORT NSString* _Nonnull Libv2rayGetObservatoryState(NSString* _Nullable requestJSON);
+
+/**
  * GetV2RayStatus — старый API возвращал "RUNNING" / "STOPPED".
  */
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayGetV2RayStatus(void);

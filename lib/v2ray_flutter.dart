@@ -168,11 +168,22 @@ class V2rayFlutter {
     int timeoutMs = 5000,
   }) async {
     try {
+      final sw = Stopwatch()..start();
       final String raw = await _channel.invokeMethod('probeOutbound', {
         'tag': tag,
         'url': url,
         'timeoutMs': timeoutMs,
       });
+      sw.stop();
+      // 2026-05-21: сырой ответ от нативки. Включает body_excerpt от
+      // ip.megav.app — реальный exit-IP + asn_organization + город exit'а.
+      // Используется чтобы доказать «трафик действительно идёт через этот
+      // outbound», а не «xray dispatcher принял request». См. также
+      // probe_outbound.go::ProbeOutboundResult.
+      debugPrint('[NATIVE_PROBE_RAW] tag=$tag '
+          'invokeMs=${sw.elapsedMilliseconds} '
+          'rawLen=${raw.length} '
+          'raw=$raw');
       if (raw.isEmpty) return null;
       final Map<String, dynamic> result =
           json.decode(raw) as Map<String, dynamic>;
@@ -183,6 +194,73 @@ class V2rayFlutter {
         'outbound_tag': tag,
         'target_url': url,
         'alive': false,
+        'error': e.toString(),
+      };
+    }
+  }
+
+  /// GetObservatoryState — snapshot текущего состояния burstObservatory:
+  /// alive/dead/RTT для всех outbound'ов из subjectSelector.
+  ///
+  /// КРИТИЧНО: это **внутренний** вызов (без сети). Observatory сама
+  /// пингует subjectSelector с интервалом VpnLimits.observatoryInterval
+  /// (30с), мы только читаем уже собранную статистику. Поэтому метод
+  /// можно дёргать часто (даже раз в 1-2 сек) — это **не** создаёт
+  /// трафик к exit-серверам и не вызывает их подозрения.
+  ///
+  /// Возвращает Map:
+  /// ```
+  /// {
+  ///   "nodes": [
+  ///     {
+  ///       "tag": "bs-0",                  // outbound тег из xray-config
+  ///       "alive": true,                  // последняя проба прошла
+  ///       "delay_ms": 818,                // average RTT в миллисекундах
+  ///       "ping_all": 3,                  // сколько проб всего
+  ///       "ping_fail": 0,                 // сколько неуспешных
+  ///       "ping_avg": 818,                // == delay_ms
+  ///       "ping_max": 883,
+  ///       "ping_min": 760,
+  ///       "ping_deviation": 50,           // отклонение (стабильность)
+  ///       "last_error": "",               // если dead — текст ошибки
+  ///       "last_seen_ms": 0,              // unix-ms последнего success
+  ///       "last_try_ms": 0                // unix-ms последней пробы
+  ///     },
+  ///     ...
+  ///   ],
+  ///   "timestamp_ms": 1779326040627
+  /// }
+  /// ```
+  ///
+  /// Если ошибка — Map содержит `error` поле, `nodes` пустой.
+  /// Возможные ошибки: "xray not running", "observatory not configured".
+  ///
+  /// Winner balancer'а Dart считает сам:
+  /// ```dart
+  /// final winner = nodes
+  ///   .where((n) => n['alive'] == true)
+  ///   .reduce((a, b) => a['delay_ms'] < b['delay_ms'] ? a : b);
+  /// ```
+  ///
+  /// Lab-проверено на `_lab/test-09-swapped.json`:
+  ///   bs-1 (freedom direct) → alive=true, delay_ms=576, **winner**
+  ///   bs-0 (Egypt fake-pwd) → alive=false, ping_fail=3
+  ///   server-0/server-1 (chain через мёртвый bs-0) → alive=false
+  static Future<Map<String, dynamic>?> getObservatoryState({
+    String requestJSON = '',
+  }) async {
+    try {
+      final String raw = await _channel.invokeMethod('getObservatoryState', {
+        'requestJSON': requestJSON,
+      });
+      if (raw.isEmpty) return null;
+      final Map<String, dynamic> result =
+          json.decode(raw) as Map<String, dynamic>;
+      return result;
+    } catch (e) {
+      debugPrint('❌ V2Ray: getObservatoryState failed: $e');
+      return {
+        'nodes': <dynamic>[],
         'error': e.toString(),
       };
     }

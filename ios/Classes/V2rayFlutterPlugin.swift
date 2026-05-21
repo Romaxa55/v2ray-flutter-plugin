@@ -146,6 +146,24 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
         }
       }
 
+    case "getObservatoryState":
+      // 2026-05-21: iOS stub. Xray работает внутри Network Extension
+      // (отдельный процесс), main app не имеет прямого доступа к
+      // running xray-instance. Нужен App Group bridge (UserDefaults +
+      // Darwin notification ИЛИ CFMessagePort) — TODO отдельной сессией.
+      //
+      // Возвращаем явный error чтобы Dart-сторона (ObservatoryStateNotifier)
+      // не накапливала MissingPluginException — 1 poll/sec × N часов работы
+      // VPN на iOS = много шума в логах. Сейчас Dart получит error и спокойно
+      // отрендерит пустой snapshot без NoSuchMethodError.
+      //
+      // Когда App Group bridge будет готов — заменить на реальный вызов:
+      //   1. main app пишет getObservatoryState request в App Group
+      //   2. NE process слушает Darwin-notification, отвечает в App Group
+      //   3. main app читает ответ, отдаёт Dart
+      // ИЛИ через NotificationCenter + EventChannel для live-push.
+      result("{\"nodes\":[],\"error\":\"ios_not_implemented\"}")
+
     case "cleanupV2Ray":
       coreController = nil
       isInitialized = false

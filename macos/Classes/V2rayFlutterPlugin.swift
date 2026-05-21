@@ -115,6 +115,24 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       let index = V2RayWrapper.getActiveServerIndex()
       result(index)
 
+    case "getObservatoryState":
+      // 2026-05-21: snapshot текущего burstObservatory из работающего
+      // xray-инстансе. Internal-only (без сети) — дёшево.
+      //
+      // Args: requestJSON(String?) — reserved, можно nil.
+      // Returns: JSON-string (см. libXray/xray/observatory_state.go).
+      //
+      // Sync-call (быстро, ~1мс): просто читает кеш observatory. На main
+      // thread безопасно — но для симметрии с probeOutbound используем
+      // background queue, всё равно invokeMethod async на Dart-стороне.
+      let requestJSON = (call.arguments as? [String: Any])?["requestJSON"] as? String ?? ""
+      DispatchQueue.global(qos: .userInitiated).async {
+        let json = V2RayWrapper.getObservatoryState(requestJSON)
+        DispatchQueue.main.async {
+          result(json)
+        }
+      }
+
     case "convertUrlToConfig":
       // 2026-05-14: see iOS V2rayFlutterPlugin.swift comment.
       // Swift import ObjC: 'convertUrlToConfig:' → convertUrl(toConfig:)

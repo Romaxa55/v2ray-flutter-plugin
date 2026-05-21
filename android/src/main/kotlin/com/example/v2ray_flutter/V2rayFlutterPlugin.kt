@@ -204,6 +204,30 @@ class V2rayFlutterPlugin: FlutterPlugin, MethodCallHandler {
         }
       }
 
+      "getObservatoryState" -> {
+        // 2026-05-21: snapshot текущего burstObservatory из работающего
+        // xray-инстансе. Internal-only (без сети) — observatory сама пингует
+        // в фоне с интервалом 30с, мы только читаем cached статистику.
+        //
+        // Args: requestJSON(String?) — зарезервирован, можно null/empty.
+        // Returns: JSON (см. libXray/xray/observatory_state.go).
+        //   {"nodes":[{"tag":"bs-0","alive":true,"delay_ms":818,...}], "timestamp_ms":...}
+        //
+        // Winner balancer'а Dart считает сам: min(delay_ms) среди alive=true.
+        try {
+          val requestJSON = call.argument<String>("requestJSON") ?: ""
+          val json = Libv2ray.getObservatoryState(requestJSON)
+          if (json.isNullOrEmpty()) {
+            result.success("""{"nodes":[],"error":"empty response"}""")
+          } else {
+            result.success(json)
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "❌ getObservatoryState failed: ${e.message}")
+          result.error("OBS_STATE_ERROR", "getObservatoryState failed: ${e.message}", null)
+        }
+      }
+
       "cleanupV2Ray" -> {
         Log.d(TAG, "🧹 Cleaning up V2Ray...")
         try {

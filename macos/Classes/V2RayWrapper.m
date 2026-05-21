@@ -318,6 +318,29 @@ static int savedStdout = -1;
     return json ?: @"FAILED: utf8 decode";
 }
 
+// 2026-05-21: snapshot текущего observatory-state. Internal-only (без сети) —
+// observatory сама пингует субъекты в фоне, мы только читаем уже собранную
+// статистику. Дёшево (just JSON marshal внутри Go).
+//
+// Forward-declaration extern — после пересборки libv2ray.a (через python3
+// build/main.py apple all) этот символ будет в libv2ray.h автоматически.
+// Объявляем тут чтобы .m скомпилился ДО сборки libXray (CI/dev workflow).
+extern char* GetObservatoryState(char* requestJSON);
+
++ (NSString *)getObservatoryState:(NSString *)requestJSON {
+    // Тот же контракт что ProbeOutbound: cgo читает GoString копией, не модифицирует
+    // C-указатель, поэтому strdup не нужен.
+    const char *cReq = requestJSON != nil ? [requestJSON UTF8String] : "";
+    if (cReq == NULL) cReq = "";
+    char *resultPtr = GetObservatoryState((char *)cReq);
+    if (resultPtr == NULL) {
+        return @"{\"nodes\":[],\"error\":\"GetObservatoryState returned NULL\"}";
+    }
+    NSString *json = [NSString stringWithUTF8String:resultPtr];
+    free(resultPtr);  // Go выделил через C.CString — обязательно free.
+    return json ?: @"{\"nodes\":[],\"error\":\"utf8 decode\"}";
+}
+
 // Проверяем нужно ли скипать строку xray-вывода. Xray валит:
 //   - [Warning] common/errors: The feature WebSocket transport ... is deprecated
 //     (на каждый ws-outbound, ~50 строк на 20 серверов)

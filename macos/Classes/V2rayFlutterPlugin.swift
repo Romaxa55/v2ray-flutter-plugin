@@ -17,6 +17,7 @@ private class ObservatoryStreamHandler: NSObject, FlutterStreamHandler {
   private static let observatoryDarwinNotification = "com.megav.vpn.observatory.updated"
   private static let observatoryStateKey = "observatory_state_json"
   private static let observatoryTimestampKey = "observatory_state_ts"
+  private static let staleThresholdSec: TimeInterval = 10.0
 
   // Хранится как static чтобы Darwin C-callback мог достучаться.
   static var eventSink: FlutterEventSink?
@@ -31,9 +32,11 @@ private class ObservatoryStreamHandler: NSObject, FlutterStreamHandler {
         CFNotificationCenterGetDarwinNotifyCenter(),
         nil,
         { _, _, _, _, _ in
-          // Dart UI: push "updated" чтобы ObservatoryStateNotifier сразу poll'нул.
+          // Darwin → читаем App Group и пушим JSON в Dart EventChannel
+          // (симметрично iOS). Dart получает сразу snapshot, без extra
+          // round-trip через MethodChannel poll.
           DispatchQueue.main.async {
-            ObservatoryStreamHandler.eventSink?("updated")
+            ObservatoryStreamHandler.pushFromAppGroup()
           }
         },
         cfName.rawValue,
@@ -50,6 +53,32 @@ private class ObservatoryStreamHandler: NSObject, FlutterStreamHandler {
     return nil
   }
 
+  /// Читает App Group и пушит JSON snapshot на Dart EventSink.
+  /// Симметрично iOS ObservatoryStreamHandler.pushFromAppGroup.
+  ///
+  /// Должно вызываться с main thread (eventSink не thread-safe).
+  static func pushFromAppGroup() {
+    assert(Thread.isMainThread)
+    guard let sink = eventSink else { return }
+    guard let defaults = UserDefaults(suiteName: appGroupID) else {
+      sink("{\"nodes\":[],\"error\":\"app_group_unavailable\"}")
+      return
+    }
+    let ts = defaults.double(forKey: observatoryTimestampKey)
+    let age = Date().timeIntervalSince1970 - ts
+    if ts <= 0 || age > staleThresholdSec {
+      // App Group stale / ещё не писали — warming up.
+      sink("{\"nodes\":[],\"warming_up\":true}")
+      return
+    }
+    let json = defaults.string(forKey: observatoryStateKey) ?? ""
+    if json.isEmpty {
+      sink("{\"nodes\":[],\"warming_up\":true}")
+    } else {
+      sink(json)
+    }
+  }
+
   /// Хелпер: записать observatory snapshot в App Group + postить Darwin notification.
   /// Вызывается из getObservatoryState handler'а plugin'а (macOS-специфика:
   /// xray в main app, NE не видит getObservatoryState напрямую).
@@ -58,7 +87,8 @@ private class ObservatoryStreamHandler: NSObject, FlutterStreamHandler {
     let snapshotJson = json.isEmpty ? "{\"nodes\":[],\"warming_up\":true}" : json
     defaults.set(snapshotJson, forKey: observatoryStateKey)
     defaults.set(Date().timeIntervalSince1970, forKey: observatoryTimestampKey)
-    // Darwin push → NE + main app listeners
+    // Darwin push → NE + main app listeners (включая наш собственный
+    // observer выше — он прочитает свежий snapshot и пушнёт в EventSink).
     let cfName = CFNotificationName(observatoryDarwinNotification as CFString)
     CFNotificationCenterPostNotification(
       CFNotificationCenterGetDarwinNotifyCenter(), cfName, nil, nil, true

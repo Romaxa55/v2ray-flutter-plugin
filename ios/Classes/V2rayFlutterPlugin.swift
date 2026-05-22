@@ -146,23 +146,51 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
         }
       }
 
+    case "getBuildInfo":
+      // 2026-05-21: метаданные libv2ray. На iOS NE — gomobile-binding, метод
+      // доступен напрямую через Libv2rayGetBuildInfo (без proxy через App Group).
+      let json = Libv2rayGetBuildInfo()
+      result(json)
+
     case "getObservatoryState":
-      // 2026-05-21: iOS stub. Xray работает внутри Network Extension
-      // (отдельный процесс), main app не имеет прямого доступа к
-      // running xray-instance. Нужен App Group bridge (UserDefaults +
-      // Darwin notification ИЛИ CFMessagePort) — TODO отдельной сессией.
-      //
-      // Возвращаем явный error чтобы Dart-сторона (ObservatoryStateNotifier)
-      // не накапливала MissingPluginException — 1 poll/sec × N часов работы
-      // VPN на iOS = много шума в логах. Сейчас Dart получит error и спокойно
-      // отрендерит пустой snapshot без NoSuchMethodError.
-      //
-      // Когда App Group bridge будет готов — заменить на реальный вызов:
-      //   1. main app пишет getObservatoryState request в App Group
-      //   2. NE process слушает Darwin-notification, отвечает в App Group
-      //   3. main app читает ответ, отдаёт Dart
-      // ИЛИ через NotificationCenter + EventChannel для live-push.
-      result("{\"nodes\":[],\"error\":\"ios_not_implemented\"}")
+      // 2026-05-22: App Group bridge. Xray работает в Network Extension
+      // (отдельный процесс), к Libv2ray из main app напрямую не достучаться.
+      // Реализовано через shared UserDefaults:
+      //   1. NE (PacketTunnelProvider.startObservatoryPolling) каждые 2с
+      //      вызывает Libv2rayGetObservatoryState, пишет JSON + ts.
+      //   2. Здесь читаем JSON, проверяем что ts свежий (<=10с),
+      //      отдаём Dart'у.
+      //   3. Stale / отсутствует → возвращаем явный error чтоб Dart-сторона
+      //      нарисовала пустой snapshot без NoSuchMethodError.
+      let appGroupID = "group.com.megav.vpn"
+      let stateKey = "observatory_state_json"
+      let tsKey = "observatory_state_ts"
+      let staleThresholdSec: TimeInterval = 10.0
+
+      guard let defaults = UserDefaults(suiteName: appGroupID) else {
+        result("{\"nodes\":[],\"error\":\"app_group_unavailable\"}")
+        break
+      }
+      let ts = defaults.double(forKey: tsKey)
+      let nowTs = Date().timeIntervalSince1970
+      if ts <= 0 {
+        // NE ещё не начала poll'ить (только что connect, observatory cold)
+        // или VPN не активен.
+        result("{\"nodes\":[],\"error\":\"no_observatory_data\"}")
+        break
+      }
+      let age = nowTs - ts
+      if age > staleThresholdSec {
+        // NE упал / disconnect только что — данные устарели.
+        result("{\"nodes\":[],\"error\":\"stale\",\"age_sec\":\(age)}")
+        break
+      }
+      let json = defaults.string(forKey: stateKey) ?? ""
+      if json.isEmpty {
+        result("{\"nodes\":[],\"error\":\"empty_state\"}")
+        break
+      }
+      result(json)
 
     case "cleanupV2Ray":
       coreController = nil

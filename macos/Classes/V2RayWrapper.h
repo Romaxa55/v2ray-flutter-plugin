@@ -53,6 +53,15 @@ NS_ASSUME_NONNULL_BEGIN
 // тегам). Сейчас можно передавать nil или "" — игнорируется.
 + (NSString *)getObservatoryState:(NSString *)requestJSON;
 
+// 2026-05-21: метаданные собранной libv2ray (xray-version, features).
+// Главный feature-flag: `pr5805_balancer_dialer` (true если форк xray-core
+// с PR #5805 вкомпилен, false если upstream без chain-mode балансера).
+//
+// Returns JSON (см. libXray/xray/build_info.go):
+//   {"xray_version": "26.5.9", "go_version": "go1.26.3",
+//    "features": {"pr5805_balancer_dialer": true, "observatory_state": true, ...}}
++ (NSString *)getBuildInfo;
+
 @end
 
 NS_ASSUME_NONNULL_END

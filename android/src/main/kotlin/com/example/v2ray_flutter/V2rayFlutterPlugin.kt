@@ -2,16 +2,96 @@ package com.example.v2ray_flutter
 
 import androidx.annotation.NonNull
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import libv2ray.Libv2ray
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * Pull→Push адаптер для observatory snapshot'ов на Android.
+ *
+ * Архитектура Android: xray (Libv2ray) работает В ТОМ ЖЕ процессе что и main app
+ * (VpnTunnelService не имеет android:process в манифесте). Поэтому IPC не нужен —
+ * Libv2ray.getObservatoryState() вызывается напрямую из plugin'а.
+ *
+ * Стратегия Pull→Push:
+ *   1. При onListen — стартуем ScheduledExecutorService с интервалом [pollIntervalMs].
+ *   2. Каждый тик: вызываем Libv2ray.getObservatoryState(""), парсим результат.
+ *   3. Если json пустой / null — пушим heartbeat {"nodes":[],"warming_up":true}.
+ *   4. Результат пушим через EventSink на Dart (на main thread).
+ *   5. При onCancel — останавливаем executor.
+ *
+ * Dart-сторона: EventChannel('v2ray_flutter/observatory_events').receiveBroadcastStream()
+ * Существующий MethodChannel `getObservatoryState` остаётся как fallback poll.
+ */
+private class ObservatoryStreamHandler : EventChannel.StreamHandler {
+  private val TAG = "ObsStreamHandler"
+  private val OBSERVATORY_CHANNEL = "v2ray_flutter/observatory_events"
+  // Интервал опроса: 2с — быстрее чем Dart polling (3с), при этом
+  // не блокируем gomobile слишком часто (каждый вызов ~1ms).
+  private val pollIntervalMs = 2000L
+
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private val sinkRef = AtomicReference<EventChannel.EventSink?>(null)
+  private val executor = Executors.newSingleThreadScheduledExecutor { r ->
+    Thread(r, "obs-poll-thread").also { it.isDaemon = true }
+  }
+  private var scheduledFuture: ScheduledFuture<*>? = null
+
+  override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+    Log.d(TAG, "[OBS_STREAM] Android ObservatoryStreamHandler: onListen")
+    sinkRef.set(events)
+    scheduledFuture?.cancel(false)
+    // Первый push немедленно, затем каждые pollIntervalMs.
+    scheduledFuture = executor.scheduleWithFixedDelay(
+      ::pollAndPush,
+      0L,
+      pollIntervalMs,
+      TimeUnit.MILLISECONDS
+    )
+  }
+
+  override fun onCancel(arguments: Any?) {
+    Log.d(TAG, "[OBS_STREAM] Android ObservatoryStreamHandler: onCancel")
+    scheduledFuture?.cancel(false)
+    scheduledFuture = null
+    sinkRef.set(null)
+  }
+
+  private fun pollAndPush() {
+    val sink = sinkRef.get() ?: return
+    val json: String = try {
+      val raw = Libv2ray.getObservatoryState("")
+      if (raw.isNullOrEmpty()) {
+        """{"nodes":[],"warming_up":true}"""
+      } else {
+        raw
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "[OBS_STREAM] getObservatoryState exception: ${e.message}")
+      """{"nodes":[],"warming_up":true}"""
+    }
+    // EventSink.success() должен вызываться на main thread.
+    mainHandler.post {
+      try {
+        sinkRef.get()?.success(json)
+      } catch (e: Exception) {
+        Log.w(TAG, "[OBS_STREAM] sink.success failed: ${e.message}")
+      }
+    }
+  }
+}
 
 /** V2rayFlutterPlugin with Gomobile V2Ray Integration */
 class V2rayFlutterPlugin: FlutterPlugin, MethodCallHandler {
@@ -33,7 +113,15 @@ class V2rayFlutterPlugin: FlutterPlugin, MethodCallHandler {
     Log.d(TAG, "🔧 V2Ray Flutter plugin attached to engine")
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, "v2ray_flutter")
     channel.setMethodCallHandler(this)
-    Log.d(TAG, "✅ V2Ray Flutter plugin initialized")
+
+    // 2026-05-22: EventChannel observatory push (Вариант A — один процесс).
+    // Android: xray работает в том же process'е что и main app, поэтому
+    // Libv2ray.getObservatoryState() вызывается напрямую — без IPC.
+    // ObservatoryStreamHandler запускает poll-loop только пока Dart subscribe'нут.
+    EventChannel(flutterPluginBinding.binaryMessenger, "v2ray_flutter/observatory_events")
+      .setStreamHandler(ObservatoryStreamHandler())
+
+    Log.d(TAG, "✅ V2Ray Flutter plugin initialized (MethodChannel + EventChannel)")
 
     // Initialize connection timer
     initializeConnectionTimer()
@@ -201,6 +289,18 @@ class V2rayFlutterPlugin: FlutterPlugin, MethodCallHandler {
         } catch (e: Exception) {
           Log.e(TAG, "❌ probeOutbound failed: ${e.message}")
           result.error("PROBE_ERROR", "probeOutbound failed: ${e.message}", null)
+        }
+      }
+
+      "getBuildInfo" -> {
+        // 2026-05-21: метаданные собранной libv2ray (xray version + feature flags).
+        // Используется Dart-стороной чтобы знать поддерживается ли chain-mode (PR #5805).
+        try {
+          val json = Libv2ray.getBuildInfo()
+          result.success(json ?: """{"error":"empty"}""")
+        } catch (e: Exception) {
+          Log.e(TAG, "❌ getBuildInfo failed: ${e.message}")
+          result.error("BUILD_INFO_ERROR", "getBuildInfo failed: ${e.message}", null)
         }
       }
 

@@ -55,6 +55,22 @@ libXray сам делает периодический GC (см. memory_ios.go �
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayForceGC(void);
 
 /**
+ * GetBuildInfo — JSON с метаданными собранной libv2ray (gomobile wrapper):
+xray_version, go_version, libxray_commit (если VCS-stamping есть),
+features (карта feature-flags). Главный флаг — pr5805_balancer_dialer.
+
+Dart usage:
+  final info = await V2Ray.getBuildInfo();
+  if (info['features']['pr5805_balancer_dialer'] != true) {
+    // upstream xray без форка — chain-mode не работает,
+    // переключаемся на simple-chain через single outbound.
+  }
+
+См. libXray/xray/build_info.go — там полное объяснение detection-логики.
+ */
+FOUNDATION_EXPORT NSString* _Nonnull Libv2rayGetBuildInfo(void);
+
+/**
  * GetMemoryStats — старый custom helper для diagnostics.
  */
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayGetMemoryStats(void);

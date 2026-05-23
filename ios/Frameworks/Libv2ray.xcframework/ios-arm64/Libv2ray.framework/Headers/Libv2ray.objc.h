@@ -123,9 +123,7 @@ FOUNDATION_EXPORT NSString* _Nonnull Libv2rayInitializeV2Ray(void);
 FOUNDATION_EXPORT BOOL Libv2rayIsV2RayRunning(void);
 
 /**
- * PprofEnabled — флаг для Swift-стороны чтобы понять, есть ли pprof в
-текущем билде Libv2ray.xcframework. Если StartPprof вернёт error
-"not_compiled" — pprof отключён, не стоит звать.
+ * PprofEnabled возвращает false в релизе.
  */
 FOUNDATION_EXPORT BOOL Libv2rayPprofEnabled(void);
 
@@ -154,19 +152,7 @@ Memory: ~1.5 MB на active probe — безопасно для iOS NE jetsam 50
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayProbeOutbound(NSString* _Nullable outboundTag, NSString* _Nullable targetURL, long timeoutMs);
 
 /**
- * StartPprof запускает HTTP-сервер с pprof endpoint'ом на localhost:port.
-
-На iOS Network Extension работает в отдельном процессе, сетевой
-listener в нём ограничен sandbox'ом — но localhost loopback РАЗРЕШЁН,
-т.к. он не нарушает entitlement'ы. Для доступа с Mac используй iproxy
-чтобы пробросить порт через USB (libimobiledevice).
-
-Возвращает JSON со статусом:
-
-	{"ok":true,"port":6060,"url":"http://localhost:6060/debug/pprof/"}
-	{"ok":false,"error":"..."}
-
-Двойной вызов безопасен — второй вернёт already_running.
+ * StartPprof в релизе ничего не делает.
  */
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayStartPprof(long port);
 
@@ -177,8 +163,7 @@ FOUNDATION_EXPORT NSString* _Nonnull Libv2rayStartPprof(long port);
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayStartV2RayWithConfig(NSString* _Nullable configJSON);
 
 /**
- * StopPprof закрывает listener. После этого pprof endpoint становится
-недоступен — иначе он живёт до завершения процесса NE.
+ * StopPprof в релизе ничего не делает.
  */
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayStopPprof(void);
 

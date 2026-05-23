@@ -264,6 +264,30 @@ class V2rayFlutter {
     }
   }
 
+  /// 2026-05-22 (юзер): live memory stats из NE для debug-overlay.
+  /// На iOS NE — отдельный процесс с jetsam 50MB cap, утечки невидимы
+  /// без мониторинга. NE пишет в App Group `ne_memory_stats_json` каждые
+  /// 5 сек (PacketTunnelProvider.reportMemoryUsage), Dart читает.
+  ///
+  /// Возвращает Map: `{"mb": 42.5, "ts": 1779465895.41, "packets_in": N,
+  /// "packets_out": M}` или `{"error": "..."}` если данные недоступны.
+  ///
+  /// Платформы:
+  ///   - iOS: реальные данные из NE через App Group bridge.
+  ///   - macOS: xray в main app, можно мерить ResidentSize самого process
+  ///            — NE-stats отдают error="no_data" (NE тонкий tun2socks).
+  ///   - Android: не реализовано, возвращает error.
+  static Future<Map<String, dynamic>?> getNeMemoryStats() async {
+    try {
+      final raw = await _channel.invokeMethod<String>('getNeMemoryStats');
+      if (raw == null || raw.isEmpty) return null;
+      return json.decode(raw) as Map<String, dynamic>;
+    } catch (e) {
+      // Каналу нет (Android / macOS пока) → молча
+      return {'error': e.toString()};
+    }
+  }
+
   /// GetObservatoryState — snapshot текущего состояния burstObservatory:
   /// alive/dead/RTT для всех outbound'ов из subjectSelector.
   ///

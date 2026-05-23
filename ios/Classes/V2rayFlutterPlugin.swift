@@ -309,6 +309,23 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       let json = Libv2rayGetBuildInfo()
       result(json)
 
+    case "getNeMemoryStats":
+      // 2026-05-22 (юзер): live memory stats из NE для debug overlay.
+      // NE пишет в App Group ne_memory_stats_json каждые 5с
+      // (PacketTunnelProvider.reportMemoryUsage). Main app читает и
+      // показывает в DebugMemoryOverlay чтобы видно как утекает.
+      let appGroupID = "group.com.megav.vpn"
+      guard let defaults = UserDefaults(suiteName: appGroupID) else {
+        result("{\"error\":\"app_group_unavailable\"}")
+        break
+      }
+      let json = defaults.string(forKey: "ne_memory_stats_json") ?? ""
+      if json.isEmpty {
+        result("{\"error\":\"no_data\"}")
+      } else {
+        result(json)
+      }
+
     case "getObservatoryState":
       // 2026-05-22: App Group bridge. Xray работает в Network Extension
       // (отдельный процесс), к Libv2ray из main app напрямую не достучаться.

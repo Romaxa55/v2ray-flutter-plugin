@@ -1,12 +1,116 @@
 import Cocoa
 import FlutterMacOS
 
+// MARK: - Observatory EventChannel stream handler (2026-05-22)
+//
+// Dart-сторона подписывается через EventChannel "v2ray_flutter/observatory_events".
+// При получении Darwin notification "com.megav.vpn.observatory.updated" (которую
+// постит либо NE PacketTunnelProvider, либо сам plugin после записи snapshot)
+// pusher шлёт событие "updated" в EventSink. Dart вызывает poll() немедленно.
+//
+// Архитектура macOS: xray работает в MAIN APP (V2RayWrapper.m), не в NE.
+// Поэтому после каждого getObservatoryState call plugin сам обновляет
+// App Group (observatory_state_json / observatory_state_ts) и постит Darwin.
+
+private class ObservatoryStreamHandler: NSObject, FlutterStreamHandler {
+  private static let appGroupID = "group.com.megav.vpn"
+  private static let observatoryDarwinNotification = "com.megav.vpn.observatory.updated"
+  private static let observatoryStateKey = "observatory_state_json"
+  private static let observatoryTimestampKey = "observatory_state_ts"
+  private static let staleThresholdSec: TimeInterval = 10.0
+
+  // Хранится как static чтобы Darwin C-callback мог достучаться.
+  static var eventSink: FlutterEventSink?
+  static var observerRegistered = false
+
+  public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    ObservatoryStreamHandler.eventSink = events
+
+    if !ObservatoryStreamHandler.observerRegistered {
+      let cfName = CFNotificationName(ObservatoryStreamHandler.observatoryDarwinNotification as CFString)
+      CFNotificationCenterAddObserver(
+        CFNotificationCenterGetDarwinNotifyCenter(),
+        nil,
+        { _, _, _, _, _ in
+          // Darwin → читаем App Group и пушим JSON в Dart EventChannel
+          // (симметрично iOS). Dart получает сразу snapshot, без extra
+          // round-trip через MethodChannel poll.
+          DispatchQueue.main.async {
+            ObservatoryStreamHandler.pushFromAppGroup()
+          }
+        },
+        cfName.rawValue,
+        nil,
+        .deliverImmediately
+      )
+      ObservatoryStreamHandler.observerRegistered = true
+    }
+    return nil
+  }
+
+  public func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    ObservatoryStreamHandler.eventSink = nil
+    return nil
+  }
+
+  /// Читает App Group и пушит JSON snapshot на Dart EventSink.
+  /// Симметрично iOS ObservatoryStreamHandler.pushFromAppGroup.
+  ///
+  /// Должно вызываться с main thread (eventSink не thread-safe).
+  static func pushFromAppGroup() {
+    assert(Thread.isMainThread)
+    guard let sink = eventSink else { return }
+    guard let defaults = UserDefaults(suiteName: appGroupID) else {
+      sink("{\"nodes\":[],\"error\":\"app_group_unavailable\"}")
+      return
+    }
+    let ts = defaults.double(forKey: observatoryTimestampKey)
+    let age = Date().timeIntervalSince1970 - ts
+    if ts <= 0 || age > staleThresholdSec {
+      // App Group stale / ещё не писали — warming up.
+      sink("{\"nodes\":[],\"warming_up\":true}")
+      return
+    }
+    let json = defaults.string(forKey: observatoryStateKey) ?? ""
+    if json.isEmpty {
+      sink("{\"nodes\":[],\"warming_up\":true}")
+    } else {
+      sink(json)
+    }
+  }
+
+  /// Хелпер: записать observatory snapshot в App Group + postить Darwin notification.
+  /// Вызывается из getObservatoryState handler'а plugin'а (macOS-специфика:
+  /// xray в main app, NE не видит getObservatoryState напрямую).
+  static func writeToAppGroupAndNotify(json: String) {
+    guard let defaults = UserDefaults(suiteName: appGroupID) else { return }
+    let snapshotJson = json.isEmpty ? "{\"nodes\":[],\"warming_up\":true}" : json
+    defaults.set(snapshotJson, forKey: observatoryStateKey)
+    defaults.set(Date().timeIntervalSince1970, forKey: observatoryTimestampKey)
+    // Darwin push → NE + main app listeners (включая наш собственный
+    // observer выше — он прочитает свежий snapshot и пушнёт в EventSink).
+    let cfName = CFNotificationName(observatoryDarwinNotification as CFString)
+    CFNotificationCenterPostNotification(
+      CFNotificationCenterGetDarwinNotifyCenter(), cfName, nil, nil, true
+    )
+  }
+}
+
 public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "v2ray_flutter", binaryMessenger: registrar.messenger)
     let instance = V2rayFlutterPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
+
+    // 2026-05-22: EventChannel для мгновенного observatory push.
+    // Dart-сторона (ObservatoryStateNotifier) подписывается на поток —
+    // при Darwin notification приходит событие "updated" и poll стартует сразу.
+    let obsChannel = FlutterEventChannel(
+      name: "v2ray_flutter/observatory_events",
+      binaryMessenger: registrar.messenger
+    )
+    obsChannel.setStreamHandler(ObservatoryStreamHandler())
 
     print("✅ V2Ray Flutter Plugin registered for macOS")
   }
@@ -115,6 +219,10 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       let index = V2RayWrapper.getActiveServerIndex()
       result(index)
 
+    case "getBuildInfo":
+      // 2026-05-21: метаданные libv2ray (sanity-check feature-flags PR #5805 etc.)
+      result(V2RayWrapper.getBuildInfo())
+
     case "getObservatoryState":
       // 2026-05-21: snapshot текущего burstObservatory из работающего
       // xray-инстансе. Internal-only (без сети) — дёшево.
@@ -122,12 +230,19 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       // Args: requestJSON(String?) — reserved, можно nil.
       // Returns: JSON-string (см. libXray/xray/observatory_state.go).
       //
-      // Sync-call (быстро, ~1мс): просто читает кеш observatory. На main
-      // thread безопасно — но для симметрии с probeOutbound используем
-      // background queue, всё равно invokeMethod async на Dart-стороне.
+      // 2026-05-22 (Bug B fix, macOS): после получения JSON записываем в
+      // App Group UserDefaults (observatory_state_json + observatory_state_ts)
+      // и постим Darwin notification через ObservatoryStreamHandler.
+      // Причина: macOS xray в main app, NE не вызывает Libv2ray напрямую —
+      // NE polling (PacketTunnelProvider.pollObservatoryOnce) только читает
+      // уже записанный snapshot. Без этой записи NE писал бы heartbeat
+      // {"nodes":[],"warming_up":true} поверх реального alive-данных.
       let requestJSON = (call.arguments as? [String: Any])?["requestJSON"] as? String ?? ""
       DispatchQueue.global(qos: .userInitiated).async {
         let json = V2RayWrapper.getObservatoryState(requestJSON)
+        // Записываем в App Group + Darwin push (NE прочитает на следующем tick,
+        // Dart EventChannel subscriber получит "updated" мгновенно).
+        ObservatoryStreamHandler.writeToAppGroupAndNotify(json: json ?? "")
         DispatchQueue.main.async {
           result(json)
         }

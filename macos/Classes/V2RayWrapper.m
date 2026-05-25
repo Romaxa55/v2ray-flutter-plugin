@@ -327,6 +327,21 @@ static int savedStdout = -1;
 // Объявляем тут чтобы .m скомпилился ДО сборки libXray (CI/dev workflow).
 extern char* GetObservatoryState(char* requestJSON);
 
+// 2026-05-21: метаданные billed libv2ray. Без аргументов, простой sanity-check.
+// Forward-declaration (как probeOutbound) — после первой пересборки libv2ray.a
+// символ автоматически в libv2ray.h, и эта строка лишняя но не мешает.
+extern char* GetBuildInfo(void);
+
++ (NSString *)getBuildInfo {
+    char *resultPtr = GetBuildInfo();
+    if (resultPtr == NULL) {
+        return @"{\"error\":\"GetBuildInfo returned NULL\"}";
+    }
+    NSString *json = [NSString stringWithUTF8String:resultPtr];
+    free(resultPtr);
+    return json ?: @"{\"error\":\"utf8 decode\"}";
+}
+
 + (NSString *)getObservatoryState:(NSString *)requestJSON {
     // Тот же контракт что ProbeOutbound: cgo читает GoString копией, не модифицирует
     // C-указатель, поэтому strdup не нужен.

@@ -31,14 +31,171 @@ class Libv2rayCoreController: NSObject {
   }
 }
 
+/// Pull→Push адаптер для observatory snapshot'ов на iOS.
+///
+/// Архитектура iOS: xray работает внутри Network Extension (отдельный процесс).
+/// Из main app напрямую вызвать Libv2ray нельзя. Вместо этого:
+///   1. NE пишет `observatory_state_json` + `observatory_state_ts` в App Group
+///      (UserDefaults suite = "group.com.megav.vpn") каждые 2с.
+///   2. NE постит Darwin notification "com.megav.vpn.observatory.updated".
+///   3. ObservatoryStreamHandler подписывается на Darwin notification →
+///      при каждом notify читает App Group → пушит на Dart через EventSink.
+///   4. Если NE молчит (cold start / warming) — fallback polling каждые 2с
+///      пушит heartbeat {"nodes":[],"warming_up":true}.
+///
+/// Dart-сторона: `EventChannel('v2ray_flutter/observatory_events').receiveBroadcastStream()`
+/// Существующий MethodChannel `getObservatoryState` остаётся как fallback poll.
+class ObservatoryStreamHandler: NSObject, FlutterStreamHandler {
+  // FlutterEventSink доступен только с main thread — всегда диспатчим туда.
+  private var eventSink: FlutterEventSink?
+  // Типизированный pointer: CFNotificationCenter API ожидает UnsafeRawPointer.
+  private var darwinObserver: UnsafeRawPointer?
+  private var fallbackTimer: Timer?
+
+  private let appGroupID = "group.com.megav.vpn"
+  private let stateKey = "observatory_state_json"
+  private let tsKey = "observatory_state_ts"
+  private let darwinNotification = "com.megav.vpn.observatory.updated"
+  // Stale threshold: если NE не писал 10с — считаем stale и пушим warming_up.
+  private let staleThresholdSec: TimeInterval = 10.0
+  // Fallback poll interval: когда нет Darwin уведомлений (NE ещё не поднялся).
+  private let fallbackIntervalSec: TimeInterval = 2.0
+
+  public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    self.eventSink = events
+
+    // Очищаем предыдущую подписку, если onListen вызван повторно без onCancel
+    // (e.g. re-subscribe). Без этого старый passRetained pointer утечёт.
+    removeExistingObserver()
+
+    // Подписываемся на Darwin notification от NE (мгновенный push).
+    // passRetained увеличивает RC на 1 — балансируется в removeExistingObserver().
+    let selfPtr = Unmanaged.passRetained(self).toOpaque()
+    // CFNotificationCenterAddObserver принимает `CFString?` для параметра name
+    // (несмотря на формальный CFNotificationName в bridging-header — в Swift
+    // он раскрывается как CFString). Прямое создание через `as CFString`.
+    let notifName = darwinNotification as CFString
+    let center = CFNotificationCenterGetDarwinNotifyCenter()
+
+    // CFNotificationCallback: (CFNotificationCenter?, UnsafeMutableRawPointer?,
+    //   CFNotificationName?, UnsafeRawPointer?, CFDictionary?) -> Void
+    // Второй параметр — observer context, это наш selfPtr.
+    CFNotificationCenterAddObserver(
+      center,
+      selfPtr,
+      { _, observer, _, _, _ in
+        // Darwin callback может прийти на произвольный thread.
+        // Диспатчим на main thread для thread-safe доступа к eventSink.
+        guard let observer = observer else { return }
+        let handler = Unmanaged<ObservatoryStreamHandler>
+          .fromOpaque(UnsafeRawPointer(observer))
+          .takeUnretainedValue()
+        DispatchQueue.main.async {
+          handler.pushFromAppGroup()
+        }
+      },
+      notifName,
+      nil,
+      .deliverImmediately
+    )
+    darwinObserver = UnsafeRawPointer(selfPtr)
+
+    // Fallback: если NE ещё не постил уведомление (cold start) — poll каждые 2с.
+    startFallbackTimer()
+
+    // Первый push сразу при subscribe.
+    pushFromAppGroup()
+
+    NSLog("[OBS_STREAM] iOS ObservatoryStreamHandler: onListen started")
+    return nil
+  }
+
+  public func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    eventSink = nil
+    removeExistingObserver()
+
+    fallbackTimer?.invalidate()
+    fallbackTimer = nil
+
+    NSLog("[OBS_STREAM] iOS ObservatoryStreamHandler: onCancel")
+    return nil
+  }
+
+  /// Отписывается от Darwin notification и балансирует passRetained.
+  /// Выделено в отдельный метод чтобы вызывать как из onCancel, так и
+  /// при повторном onListen (защита от утечки retain).
+  private func removeExistingObserver() {
+    guard let ptr = darwinObserver else { return }
+    let center = CFNotificationCenterGetDarwinNotifyCenter()
+    // nil в name — снимаем все Darwin notifications для этого observer.
+    CFNotificationCenterRemoveObserver(center, ptr, nil, nil)
+    // Балансируем passRetained: одно passRetained → одно release().
+    Unmanaged<ObservatoryStreamHandler>.fromOpaque(ptr).release()
+    darwinObserver = nil
+  }
+
+  /// Читает App Group и пушит snapshot на Dart.
+  /// ВСЕГДА вызывается с main thread (из timer или через DispatchQueue.main.async).
+  func pushFromAppGroup() {
+    // eventSink не thread-safe — вызов обязан быть на main thread.
+    assert(Thread.isMainThread, "pushFromAppGroup must be called on main thread")
+    guard let sink = eventSink else { return }
+    guard let defaults = UserDefaults(suiteName: appGroupID) else {
+      sink("{\"nodes\":[],\"error\":\"app_group_unavailable\"}")
+      return
+    }
+
+    let ts = defaults.double(forKey: tsKey)
+    let age = Date().timeIntervalSince1970 - ts
+
+    if ts <= 0 || age > staleThresholdSec {
+      // NE не писал — warming up или отключён.
+      sink("{\"nodes\":[],\"warming_up\":true}")
+      return
+    }
+
+    let json = defaults.string(forKey: stateKey) ?? ""
+    if json.isEmpty {
+      sink("{\"nodes\":[],\"warming_up\":true}")
+    } else {
+      sink(json)
+    }
+  }
+
+  private func startFallbackTimer() {
+    fallbackTimer?.invalidate()
+    // Создаём Timer без немедленного добавления на RunLoop (не используем
+    // scheduledTimer, чтобы избежать двойного добавления на main RunLoop).
+    // Добавляем явно в .common mode — работает и при scroll/interaction.
+    let timer = Timer(
+      timeInterval: fallbackIntervalSec,
+      repeats: true
+    ) { [weak self] _ in
+      self?.pushFromAppGroup()
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    fallbackTimer = timer
+  }
+}
+
 public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
   private var coreController: Libv2rayCoreController?
   private var isInitialized = false
+
+  // Darwin notification + EventChannel управляется ObservatoryStreamHandler.
+  // Статические поля здесь не нужны — вся логика внутри ObservatoryStreamHandler.
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "v2ray_flutter", binaryMessenger: registrar.messenger())
     let instance = V2rayFlutterPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
+
+    // EventChannel для observatory push.
+    let obsChannel = FlutterEventChannel(
+      name: "v2ray_flutter/observatory_events",
+      binaryMessenger: registrar.messenger()
+    )
+    obsChannel.setStreamHandler(ObservatoryStreamHandler())
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -146,23 +303,68 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
         }
       }
 
+    case "getBuildInfo":
+      // 2026-05-21: метаданные libv2ray. На iOS NE — gomobile-binding, метод
+      // доступен напрямую через Libv2rayGetBuildInfo (без proxy через App Group).
+      let json = Libv2rayGetBuildInfo()
+      result(json)
+
+    case "getNeMemoryStats":
+      // 2026-05-22 (юзер): live memory stats из NE для debug overlay.
+      // NE пишет в App Group ne_memory_stats_json каждые 5с
+      // (PacketTunnelProvider.reportMemoryUsage). Main app читает и
+      // показывает в DebugMemoryOverlay чтобы видно как утекает.
+      let appGroupID = "group.com.megav.vpn"
+      guard let defaults = UserDefaults(suiteName: appGroupID) else {
+        result("{\"error\":\"app_group_unavailable\"}")
+        break
+      }
+      let json = defaults.string(forKey: "ne_memory_stats_json") ?? ""
+      if json.isEmpty {
+        result("{\"error\":\"no_data\"}")
+      } else {
+        result(json)
+      }
+
     case "getObservatoryState":
-      // 2026-05-21: iOS stub. Xray работает внутри Network Extension
-      // (отдельный процесс), main app не имеет прямого доступа к
-      // running xray-instance. Нужен App Group bridge (UserDefaults +
-      // Darwin notification ИЛИ CFMessagePort) — TODO отдельной сессией.
-      //
-      // Возвращаем явный error чтобы Dart-сторона (ObservatoryStateNotifier)
-      // не накапливала MissingPluginException — 1 poll/sec × N часов работы
-      // VPN на iOS = много шума в логах. Сейчас Dart получит error и спокойно
-      // отрендерит пустой snapshot без NoSuchMethodError.
-      //
-      // Когда App Group bridge будет готов — заменить на реальный вызов:
-      //   1. main app пишет getObservatoryState request в App Group
-      //   2. NE process слушает Darwin-notification, отвечает в App Group
-      //   3. main app читает ответ, отдаёт Dart
-      // ИЛИ через NotificationCenter + EventChannel для live-push.
-      result("{\"nodes\":[],\"error\":\"ios_not_implemented\"}")
+      // 2026-05-22: App Group bridge. Xray работает в Network Extension
+      // (отдельный процесс), к Libv2ray из main app напрямую не достучаться.
+      // Реализовано через shared UserDefaults:
+      //   1. NE (PacketTunnelProvider.startObservatoryPolling) каждые 2с
+      //      вызывает Libv2rayGetObservatoryState, пишет JSON + ts.
+      //   2. Здесь читаем JSON, проверяем что ts свежий (<=10с),
+      //      отдаём Dart'у.
+      //   3. Stale / отсутствует → возвращаем явный error чтоб Dart-сторона
+      //      нарисовала пустой snapshot без NoSuchMethodError.
+      let appGroupID = "group.com.megav.vpn"
+      let stateKey = "observatory_state_json"
+      let tsKey = "observatory_state_ts"
+      let staleThresholdSec: TimeInterval = 10.0
+
+      guard let defaults = UserDefaults(suiteName: appGroupID) else {
+        result("{\"nodes\":[],\"error\":\"app_group_unavailable\"}")
+        break
+      }
+      let ts = defaults.double(forKey: tsKey)
+      let nowTs = Date().timeIntervalSince1970
+      if ts <= 0 {
+        // NE ещё не начала poll'ить (только что connect, observatory cold)
+        // или VPN не активен.
+        result("{\"nodes\":[],\"error\":\"no_observatory_data\"}")
+        break
+      }
+      let age = nowTs - ts
+      if age > staleThresholdSec {
+        // NE упал / disconnect только что — данные устарели.
+        result("{\"nodes\":[],\"error\":\"stale\",\"age_sec\":\(age)}")
+        break
+      }
+      let json = defaults.string(forKey: stateKey) ?? ""
+      if json.isEmpty {
+        result("{\"nodes\":[],\"error\":\"empty_state\"}")
+        break
+      }
+      result(json)
 
     case "cleanupV2Ray":
       coreController = nil
@@ -201,3 +403,7 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
   }
 }
 
+// Примечание: ObservatoryStreamHandler определён выше (до V2rayFlutterPlugin).
+// Раньше здесь был дубль-класс (упрощённая версия, пушила только "updated"
+// сигнал). Он удалён 2026-05-22 — основной класс на line ~48 умеет читать
+// App Group и пушить полный JSON snapshot, что нужно Dart-стороне.

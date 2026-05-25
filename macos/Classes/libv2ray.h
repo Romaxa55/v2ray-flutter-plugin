@@ -94,6 +94,7 @@ extern char* GetV2RayVersion(void);
 extern char* TestV2RayConnection(char* url);
 extern char* ProbeOutbound(char* outboundTag, char* targetURL, int timeoutMs);
 extern char* GetObservatoryState(char* requestJSON);
+extern char* GetBuildInfo(void);
 extern char* GetV2RayStatus(void);
 extern char* CleanupV2Ray(void);
 extern void Free(char* ptr);

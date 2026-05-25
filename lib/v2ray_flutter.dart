@@ -10,6 +10,35 @@ import 'src/v2ray_timer_utils.dart';
 class V2rayFlutter {
   static const MethodChannel _channel = MethodChannel('v2ray_flutter');
 
+  /// 2026-05-22: Push-stream observatory snapshot'ов.
+  ///
+  /// На iOS: NE пишет в App Group + Darwin notification → ObservatoryStreamHandler
+  ///   читает App Group и пушит сразу при notify, плюс fallback poll 2с.
+  ///
+  /// На Android: xray в том же процессе → ObservatoryStreamHandler напрямую
+  ///   вызывает Libv2ray.getObservatoryState() каждые 2с. Никакого IPC.
+  ///
+  /// Формат каждого события: JSON-строка (как из [getObservatoryState]).
+  /// Heartbeat при отсутствии данных: `{"nodes":[],"warming_up":true}`.
+  ///
+  /// Использование:
+  /// ```dart
+  /// V2rayFlutter.observatoryEvents.listen((json) {
+  ///   final snapshot = ObservatorySnapshot.fromJson(json);
+  ///   // обновить UI
+  /// });
+  /// ```
+  ///
+  /// Dart-сторона [ObservatoryStateNotifier] использует этот stream как
+  /// primary source и падает назад на polling через [getObservatoryState]
+  /// только если platform не поддерживает EventChannel.
+  static Stream<String> get observatoryEvents {
+    const channel = EventChannel('v2ray_flutter/observatory_events');
+    return channel
+        .receiveBroadcastStream()
+        .map((dynamic event) => event as String);
+  }
+
   // ========== Gomobile V2Ray Methods (New) ==========
 
   /// Initialize V2Ray system (Gomobile).
@@ -196,6 +225,66 @@ class V2rayFlutter {
         'alive': false,
         'error': e.toString(),
       };
+    }
+  }
+
+  /// GetBuildInfo — sanity-check метаданных собранной libv2ray.
+  ///
+  /// Возвращает Map:
+  /// ```
+  /// {
+  ///   "xray_version": "26.5.9",
+  ///   "go_version": "go1.26.3",
+  ///   "libxray_commit": "...",     // если VCS-stamping есть
+  ///   "features": {
+  ///     "pr5805_balancer_dialer": true,   // chain-mode (balancer-tag в sockopt.dialerProxy)
+  ///     "observatory_state": true,         // наш own GetObservatoryState API
+  ///     "probe_outbound": true,            // honest HTTP-probe API
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// **Главный feature-flag**: `pr5805_balancer_dialer`.
+  /// - true → форк xray-core с PR #5805 вкомпилен → chain через
+  ///   BOOTSTRAP-BAL работает (sockopt.dialerProxy резолвит balancer-tag).
+  /// - false → upstream xray без форка → balancer-tag в dialerProxy
+  ///   даёт `there is no outbound handler for dialerProxy` → chain
+  ///   рушится. Нужно использовать simple-chain с outbound-tag.
+  ///
+  /// Можно вызывать в любой момент (не требует запущенного xray).
+  /// Используется на старте app для логирования + sanity-check.
+  static Future<Map<String, dynamic>?> getBuildInfo() async {
+    try {
+      final raw = await _channel.invokeMethod<String>('getBuildInfo');
+      if (raw == null || raw.isEmpty) return null;
+      return json.decode(raw) as Map<String, dynamic>;
+    } catch (e) {
+      debugPrint('❌ V2Ray: getBuildInfo failed: $e');
+      return {'error': e.toString()};
+    }
+  }
+
+  /// 2026-05-22 (юзер): live memory stats из NE для debug-overlay.
+  /// На iOS NE — отдельный процесс с jetsam 50MB cap, утечки невидимы
+  /// без мониторинга. NE пишет в App Group `ne_memory_stats_json` каждые
+  /// 5 сек (PacketTunnelProvider.reportMemoryUsage), Dart читает.
+  ///
+  /// Возвращает Map: `{"mb": 42.5, "ts": 1779465895.41, "packets_in": N,
+  /// "packets_out": M}` или `{"error": "..."}` если данные недоступны.
+  ///
+  /// Платформы:
+  ///   - iOS: реальные данные из NE через App Group bridge.
+  ///   - macOS: xray в main app, можно мерить ResidentSize самого process
+  ///            — NE-stats отдают error="no_data" (NE тонкий tun2socks).
+  ///   - Android: не реализовано, возвращает error.
+  static Future<Map<String, dynamic>?> getNeMemoryStats() async {
+    try {
+      final raw = await _channel.invokeMethod<String>('getNeMemoryStats');
+      if (raw == null || raw.isEmpty) return null;
+      return json.decode(raw) as Map<String, dynamic>;
+    } catch (e) {
+      // Каналу нет (Android / macOS пока) → молча
+      return {'error': e.toString()};
     }
   }
 

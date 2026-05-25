@@ -55,6 +55,22 @@ libXray сам делает периодический GC (см. memory_ios.go �
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayForceGC(void);
 
 /**
+ * GetBuildInfo — JSON с метаданными собранной libv2ray (gomobile wrapper):
+xray_version, go_version, libxray_commit (если VCS-stamping есть),
+features (карта feature-flags). Главный флаг — pr5805_balancer_dialer.
+
+Dart usage:
+  final info = await V2Ray.getBuildInfo();
+  if (info['features']['pr5805_balancer_dialer'] != true) {
+    // upstream xray без форка — chain-mode не работает,
+    // переключаемся на simple-chain через single outbound.
+  }
+
+См. libXray/xray/build_info.go — там полное объяснение detection-логики.
+ */
+FOUNDATION_EXPORT NSString* _Nonnull Libv2rayGetBuildInfo(void);
+
+/**
  * GetMemoryStats — старый custom helper для diagnostics.
  */
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayGetMemoryStats(void);
@@ -107,6 +123,11 @@ FOUNDATION_EXPORT NSString* _Nonnull Libv2rayInitializeV2Ray(void);
 FOUNDATION_EXPORT BOOL Libv2rayIsV2RayRunning(void);
 
 /**
+ * PprofEnabled возвращает false в релизе.
+ */
+FOUNDATION_EXPORT BOOL Libv2rayPprofEnabled(void);
+
+/**
  * ProbeOutbound — honest HTTP-probe через конкретный outbound в работающем
 xray-инстансе. Использует session.SetForcedOutboundTagToContext для
 принудительной маршрутизации (игнорируя balancer/routing).
@@ -131,10 +152,20 @@ Memory: ~1.5 MB на active probe — безопасно для iOS NE jetsam 50
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayProbeOutbound(NSString* _Nullable outboundTag, NSString* _Nullable targetURL, long timeoutMs);
 
 /**
+ * StartPprof в релизе ничего не делает.
+ */
+FOUNDATION_EXPORT NSString* _Nonnull Libv2rayStartPprof(long port);
+
+/**
  * StartV2RayWithConfig — упаковывает JSON в base64-request формат
 и вызывает новый RunXrayFromJSON. Возвращает "SUCCESS" или "FAILED: ..."
  */
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayStartV2RayWithConfig(NSString* _Nullable configJSON);
+
+/**
+ * StopPprof в релизе ничего не делает.
+ */
+FOUNDATION_EXPORT NSString* _Nonnull Libv2rayStopPprof(void);
 
 /**
  * StopV2Ray — обёртка над новым StopXray. Идемпотентный: если xray уже

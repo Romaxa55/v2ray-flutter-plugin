@@ -70,6 +70,11 @@ android {
         // app:compileApkDebugKotlin.
         api(name: 'libv2ray', ext: 'aar')
         implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+        // 2026-05-28 (#20 iOS-parity Observatory bridge): MMKV для чтения
+        // snapshot который пишет VpnTunnelService (:vpntunnel процесс).
+        // Plugin живёт в UI-процессе, прямой Libv2ray.getObservatoryState
+        // вернёт пустоту (xray не запущен в UI после Phase 1.5).
+        implementation 'com.tencent:mmkv:1.3.9'
         // 2026-05-15: убран хардкод flutter_embedding_release —
         // эта артефакт-версия удалена из Maven. Современный Flutter плагин
         // получает embedding через flutter.gradle автоматически.

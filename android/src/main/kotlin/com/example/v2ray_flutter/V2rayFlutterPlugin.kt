@@ -35,11 +35,16 @@ import java.util.concurrent.atomic.AtomicReference
  * Dart-сторона: EventChannel('v2ray_flutter/observatory_events').receiveBroadcastStream()
  * Существующий MethodChannel `getObservatoryState` остаётся как fallback poll.
  */
-private class ObservatoryStreamHandler : EventChannel.StreamHandler {
+private class ObservatoryStreamHandler(
+  private val plugin: V2rayFlutterPlugin,
+  private val appContext: android.content.Context,
+) : EventChannel.StreamHandler {
   private val TAG = "ObsStreamHandler"
   private val OBSERVATORY_CHANNEL = "v2ray_flutter/observatory_events"
-  // Интервал опроса: 2с — быстрее чем Dart polling (3с), при этом
-  // не блокируем gomobile слишком часто (каждый вызов ~1ms).
+  // Интервал опроса: 2с. Service пишет snapshot в MMKV каждые 3с,
+  // мы читаем чаще чтобы не пропустить обновление.
+  // 2026-05-28 (Phase 1.5 #20): читаем из MMKV вместо прямого
+  // Libv2ray-вызова — xray в :vpntunnel процессе после изоляции.
   private val pollIntervalMs = 2000L
 
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -72,11 +77,18 @@ private class ObservatoryStreamHandler : EventChannel.StreamHandler {
   private fun pollAndPush() {
     val sink = sinkRef.get() ?: return
     val json: String = try {
-      val raw = Libv2ray.getObservatoryState("")
-      if (raw.isNullOrEmpty()) {
-        """{"nodes":[],"warming_up":true}"""
+      // 2026-05-28 (Phase 1.5 #20): читаем из MMKV (Service пишет).
+      // Fallback на прямой Libv2ray для legacy single-process mode.
+      val fromMmkv = plugin.readObservatorySnapshotFromMmkv()
+      if (!fromMmkv.isNullOrEmpty()) {
+        fromMmkv
       } else {
-        raw
+        val raw = Libv2ray.getObservatoryState("")
+        if (raw.isNullOrEmpty()) {
+          """{"nodes":[],"warming_up":true}"""
+        } else {
+          raw
+        }
       }
     } catch (e: Exception) {
       Log.w(TAG, "[OBS_STREAM] getObservatoryState exception: ${e.message}")
@@ -109,22 +121,72 @@ class V2rayFlutterPlugin: FlutterPlugin, MethodCallHandler {
   /// when the Flutter Engine is detached from the Activity
   private lateinit var channel : MethodChannel
 
+  // 2026-05-28 (#20 iOS-parity Observatory bridge): MMKV instance для
+  // чтения snapshot'ов которые пишет VpnTunnelService (:vpntunnel process).
+  // mmkvID должен совпадать с AppGroupStore.MMKV_ID в app модуле.
+  private var appGroupMmkv: com.tencent.mmkv.MMKV? = null
+
+  private fun ensureMmkv(context: android.content.Context): com.tencent.mmkv.MMKV? {
+    val existing = appGroupMmkv
+    if (existing != null) return existing
+    return try {
+      // MMKV.initialize идемпотентно — безопасно звать дважды (UI process
+      // уже инициализировал через MegaVApplication.onCreate, но Plugin
+      // может attached до этого).
+      com.tencent.mmkv.MMKV.initialize(context.applicationContext)
+      val kv = com.tencent.mmkv.MMKV.mmkvWithID(
+        "megav_app_group",
+        com.tencent.mmkv.MMKV.MULTI_PROCESS_MODE
+      )
+      appGroupMmkv = kv
+      kv
+    } catch (e: Exception) {
+      Log.w(TAG, "[OBS_BRIDGE] MMKV init failed: ${e.message}")
+      null
+    }
+  }
+
   override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
     Log.d(TAG, "🔧 V2Ray Flutter plugin attached to engine")
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, "v2ray_flutter")
     channel.setMethodCallHandler(this)
 
-    // 2026-05-22: EventChannel observatory push (Вариант A — один процесс).
-    // Android: xray работает в том же process'е что и main app, поэтому
-    // Libv2ray.getObservatoryState() вызывается напрямую — без IPC.
-    // ObservatoryStreamHandler запускает poll-loop только пока Dart subscribe'нут.
+    // 2026-05-22: EventChannel observatory push.
+    // 2026-05-28 (Phase 1.5 follow-up): после изоляции xray в :vpntunnel
+    // прямой Libv2ray.getObservatoryState() в UI-процессе вернёт пустоту.
+    // ObservatoryStreamHandler теперь читает snapshot из MMKV (его пишет
+    // VpnTunnelService.startObservatorySnapshotWriter каждые 3 сек).
     EventChannel(flutterPluginBinding.binaryMessenger, "v2ray_flutter/observatory_events")
-      .setStreamHandler(ObservatoryStreamHandler())
+      .setStreamHandler(ObservatoryStreamHandler(this, flutterPluginBinding.applicationContext))
+
+    // Pre-init MMKV в onAttachedToEngine — UI-процесс уже должен был
+    // инициализировать через MegaVApplication, но safety-net.
+    ensureMmkv(flutterPluginBinding.applicationContext)
 
     Log.d(TAG, "✅ V2Ray Flutter plugin initialized (MethodChannel + EventChannel)")
 
     // Initialize connection timer
     initializeConnectionTimer()
+  }
+
+  /// Internal helper для ObservatoryStreamHandler — читает snapshot из MMKV.
+  internal fun readObservatorySnapshotFromMmkv(): String? {
+    val kv = appGroupMmkv ?: return null
+    return try {
+      kv.decodeString("observatory_snapshot_json", null)
+    } catch (e: Exception) {
+      null
+    }
+  }
+
+  /// Internal helper — читает buildInfo из MMKV.
+  internal fun readBuildInfoFromMmkv(): String? {
+    val kv = appGroupMmkv ?: return null
+    return try {
+      kv.decodeString("xray_build_info_json", null)
+    } catch (e: Exception) {
+      null
+    }
   }
 
   override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
@@ -294,8 +356,16 @@ class V2rayFlutterPlugin: FlutterPlugin, MethodCallHandler {
 
       "getBuildInfo" -> {
         // 2026-05-21: метаданные собранной libv2ray (xray version + feature flags).
-        // Используется Dart-стороной чтобы знать поддерживается ли chain-mode (PR #5805).
+        // 2026-05-28 (Phase 1.5 #20): xray-core в :vpntunnel, не в UI.
+        // Читаем snapshot из MMKV который пишет VpnTunnelService на старте.
+        // Fallback на прямой Libv2ray (legacy / pre-Phase-1.5 builds).
         try {
+          val fromMmkv = readBuildInfoFromMmkv()
+          if (!fromMmkv.isNullOrEmpty()) {
+            result.success(fromMmkv)
+            return@onMethodCall
+          }
+          // Fallback: прямой вызов (legacy single-process mode).
           val json = Libv2ray.getBuildInfo()
           result.success(json ?: """{"error":"empty"}""")
         } catch (e: Exception) {
@@ -309,12 +379,22 @@ class V2rayFlutterPlugin: FlutterPlugin, MethodCallHandler {
         // xray-инстансе. Internal-only (без сети) — observatory сама пингует
         // в фоне с интервалом 30с, мы только читаем cached статистику.
         //
+        // 2026-05-28 (Phase 1.5 #20 iOS-parity): xray-core в :vpntunnel,
+        // не в UI. Читаем snapshot из MMKV который пишет VpnTunnelService
+        // .startObservatorySnapshotWriter каждые 3 сек.
+        // Fallback на прямой Libv2ray для legacy single-process mode.
+        //
         // Args: requestJSON(String?) — зарезервирован, можно null/empty.
         // Returns: JSON (см. libXray/xray/observatory_state.go).
         //   {"nodes":[{"tag":"bs-0","alive":true,"delay_ms":818,...}], "timestamp_ms":...}
-        //
-        // Winner balancer'а Dart считает сам: min(delay_ms) среди alive=true.
         try {
+          val fromMmkv = readObservatorySnapshotFromMmkv()
+          if (!fromMmkv.isNullOrEmpty()) {
+            result.success(fromMmkv)
+            return@onMethodCall
+          }
+          // Fallback: прямой вызов (legacy single-process mode / cold start
+          // когда Service ещё не записал snapshot).
           val requestJSON = call.argument<String>("requestJSON") ?: ""
           val json = Libv2ray.getObservatoryState(requestJSON)
           if (json.isNullOrEmpty()) {

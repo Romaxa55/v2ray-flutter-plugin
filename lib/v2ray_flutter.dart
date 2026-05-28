@@ -258,6 +258,10 @@ class V2rayFlutter {
       final raw = await _channel.invokeMethod<String>('getBuildInfo');
       if (raw == null || raw.isEmpty) return null;
       return json.decode(raw) as Map<String, dynamic>;
+    } on MissingPluginException catch (e) {
+      // 2026-05-28: Android race — plugin attach происходит ПОЗЖЕ чем Activity
+      // onCreate. Возвращаем error-сignal чтобы caller сделал retry.
+      return {'error': 'MissingPluginException: ${e.message}'};
     } catch (e) {
       debugPrint('❌ V2Ray: getBuildInfo failed: $e');
       return {'error': e.toString()};
@@ -346,6 +350,11 @@ class V2rayFlutter {
       final Map<String, dynamic> result =
           json.decode(raw) as Map<String, dynamic>;
       return result;
+    } on MissingPluginException catch (_) {
+      // 2026-05-28: Android race — plugin attach происходит ПОЗЖЕ чем Activity
+      // onCreate, polling-loop успевает дёрнуть раньше. Молча возвращаем null,
+      // не спамим лог. Следующий poll через 1с уже найдёт handler.
+      return null;
     } catch (e) {
       debugPrint('❌ V2Ray: getObservatoryState failed: $e');
       return {

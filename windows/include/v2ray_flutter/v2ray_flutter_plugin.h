@@ -1,6 +1,31 @@
 #ifndef FLUTTER_PLUGIN_V2RAY_FLUTTER_PLUGIN_H_
 #define FLUTTER_PLUGIN_V2RAY_FLUTTER_PLUGIN_H_
 
+#include <flutter_plugin_registrar.h>
+
+#ifdef FLUTTER_PLUGIN_IMPL
+#define FLUTTER_PLUGIN_EXPORT __declspec(dllexport)
+#else
+#define FLUTTER_PLUGIN_EXPORT __declspec(dllimport)
+#endif
+
+// Публичная C-точка входа — её зовёт generated_plugin_registrant.cc.
+// Flutter 3.41 на Windows для pluginClass=V2rayFlutterPlugin генерит:
+//   #include <v2ray_flutter/v2ray_flutter_plugin.h>
+//   V2rayFlutterPluginRegisterWithRegistrar(...);
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
+FLUTTER_PLUGIN_EXPORT void V2rayFlutterPluginRegisterWithRegistrar(
+    FlutterDesktopPluginRegistrarRef registrar);
+
+#if defined(__cplusplus)
+}  // extern "C"
+#endif
+
+#ifdef __cplusplus
+
 #include <flutter/method_channel.h>
 #include <flutter/event_channel.h>
 #include <flutter/event_sink.h>
@@ -35,17 +60,21 @@ class V2rayFlutterPlugin : public flutter::Plugin {
   V2rayFlutterPlugin(const V2rayFlutterPlugin&) = delete;
   V2rayFlutterPlugin& operator=(const V2rayFlutterPlugin&) = delete;
 
- private:
   void HandleMethodCall(
       const flutter::MethodCall<flutter::EncodableValue>& call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+  void StartObservatoryThread();
+  void StopObservatoryThread();
 
+  // EventSink + mutex доступны RegisterWithRegistrar-лямбдам.
+  std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> obs_sink_;
+  std::mutex obs_mutex_;
+
+ private:
   bool EnsureLoaded();
   std::string CallStr(FnVoidStr fn);
   std::string CallStr1(FnStrStr fn, const std::string& arg);
   int ActiveServerIndexFromObservatory();
-  void StartObservatoryThread();
-  void StopObservatoryThread();
 
   HMODULE h_ = nullptr;
   bool loaded_ = false;
@@ -66,17 +95,15 @@ class V2rayFlutterPlugin : public flutter::Plugin {
 
   std::string last_error_;
 
-  // observatory EventChannel
-  std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> obs_sink_;
-  std::mutex obs_mutex_;
   std::thread obs_thread_;
   std::atomic<bool> obs_run_{false};
 
-  // connection timers
   std::atomic<long long> connect_start_ms_{0};
   std::atomic<long long> total_ms_{0};
 };
 
 }  // namespace v2ray_flutter
+
+#endif  // __cplusplus
 
 #endif  // FLUTTER_PLUGIN_V2RAY_FLUTTER_PLUGIN_H_

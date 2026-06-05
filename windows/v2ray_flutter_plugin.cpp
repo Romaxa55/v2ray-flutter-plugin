@@ -1,5 +1,4 @@
-#include "include/v2ray_flutter/v2ray_flutter_plugin_c_api.h"
-#include "v2ray_flutter_plugin.h"
+#include "include/v2ray_flutter/v2ray_flutter_plugin.h"
 
 #include <flutter/event_stream_handler_functions.h>
 #include <flutter/method_channel.h>
@@ -248,7 +247,7 @@ void V2rayFlutterPlugin::StopObservatoryThread() {
 
 }  // namespace v2ray_flutter
 
-void V2rayFlutterPluginCApiRegisterWithRegistrar(
+void V2rayFlutterPluginRegisterWithRegistrar(
     FlutterDesktopPluginRegistrarRef registrar) {
   v2ray_flutter::V2rayFlutterPlugin::RegisterWithRegistrar(
       flutter::PluginRegistrarManager::GetInstance()

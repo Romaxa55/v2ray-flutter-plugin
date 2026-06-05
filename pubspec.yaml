@@ -46,6 +46,14 @@ flutter:
       android:
         package: com.example.v2ray_flutter
         pluginClass: V2rayFlutterPlugin
+      # 2026-06-05: Windows-секция была пропущена → канал v2ray_flutter не
+      # регистрировался, Dart получал MissingPluginException на
+      # convertUrlToConfig (→ Dart-фоллбэк конфиг → трафик в block) и
+      # getActiveServerIndex/getObservatoryState/observatory_events (→ UI не
+      # реагировал). Плагин: v2ray_flutter/windows/v2ray_flutter_plugin.cpp,
+      # грузит libv2ray.dll (тот же что runner) в том же процессе.
+      windows:
+        pluginClass: V2rayFlutterPlugin
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:

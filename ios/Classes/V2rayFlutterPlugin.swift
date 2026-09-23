@@ -330,8 +330,9 @@ public class V2rayFlutterPlugin: NSObject, FlutterPlugin {
       // 2026-05-22: App Group bridge. Xray работает в Network Extension
       // (отдельный процесс), к Libv2ray из main app напрямую не достучаться.
       // Реализовано через shared UserDefaults:
-      //   1. NE (PacketTunnelProvider.startObservatoryPolling) каждые 2с
-      //      вызывает Libv2rayGetObservatoryState, пишет JSON + ts.
+      //   1. NE (PacketTunnelProvider.startObservatoryPolling) каждые 6с
+      //      (2026-09-23, было 2с) вызывает Libv2rayGetObservatoryState,
+      //      пишет JSON + ts. Интервал обязан быть меньше staleThresholdSec.
       //   2. Здесь читаем JSON, проверяем что ts свежий (<=10с),
       //      отдаём Dart'у.
       //   3. Stale / отсутствует → возвращаем явный error чтоб Dart-сторона

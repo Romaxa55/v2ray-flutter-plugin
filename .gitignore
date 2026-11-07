@@ -37,3 +37,9 @@ libs/ios/Libv2ray.xcframework/ios-arm64_x86_64-simulator/
 libs/ios/Libv2ray.xcframework/ios-arm64_x86_64-maccatalyst/
 libs/ios/Libv2ray.xcframework/macos-arm64_x86_64/
 libs/ios/ios-arm64_x86_64-simulator/
+
+# Ядро Android не хранится в git (MegaV_checker#50): его кладёт MegaV/scripts/fetch-core.sh
+# из релиза Romaxa55/libXray по core-version.env, рядом штамп .core с тегом и sha256.
+# Закоммиченный aar был июньским ядром, и локальные сборки брали его молча.
+android/libs/libv2ray.aar
+android/libs/libv2ray.aar.core

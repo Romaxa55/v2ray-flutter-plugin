@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'src/linux_xray.dart';
 import 'src/v2ray_config_helper.dart';
 import 'src/v2ray_timer_utils.dart';
 
@@ -86,6 +88,7 @@ class V2rayFlutter {
   /// // proxyOutbound — готовый outbound для нашего конфига.
   /// ```
   static Future<Map<String, dynamic>?> convertUrlToConfig(String url) async {
+    if (Platform.isLinux) return LinuxXray.convertUrlToConfig(url);
     try {
       final String raw = await _channel.invokeMethod('convertUrlToConfig', {
         'url': url,

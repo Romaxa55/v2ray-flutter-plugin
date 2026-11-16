@@ -71,7 +71,10 @@ Dart usage:
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayGetBuildInfo(void);
 
 /**
- * GetMemoryStats — старый custom helper для diagnostics.
+ * GetMemoryStats — the Go runtime's numbers for diagnostics, as JSON:
+whether the core runs, live goroutines, heap bytes in use, idle and given
+back to the OS, all bytes the runtime got from the OS, completed GC cycles.
+Reading them stops the world for a moment: not for a hot path.
  */
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayGetMemoryStats(void);
 
@@ -123,6 +126,36 @@ FOUNDATION_EXPORT NSString* _Nonnull Libv2rayInitializeV2Ray(void);
 FOUNDATION_EXPORT BOOL Libv2rayIsV2RayRunning(void);
 
 /**
+ * ObservatoryCheck runs one burstObservatory round now, over the outbounds
+its subjectSelector picks, and returns the GetObservatoryState JSON once
+every probe answered or ran out of pingConfig.timeout. An outbound that
+stopped answering reads alive=false within that timeout, and leastPing
+passes it by from then on.
+
+Blocks for up to pingConfig.timeout: call it off the main thread.
+
+Details: xray/observatory_check.go.
+ */
+FOUNDATION_EXPORT NSString* _Nonnull Libv2rayObservatoryCheck(void);
+
+/**
+ * OverrideBalancer pins the balancer tagged balancer to the outbound tagged
+target: every new connection it routes goes through target, connections
+already open stay where they are. An empty target lifts the pin, and the
+balancer's strategy picks again.
+
+Xray takes a pinned outbound even when it is dead, and the balancer's
+fallbackTag does not apply to it: lift the pin once GetObservatoryState or
+ObservatoryCheck reads it alive=false.
+
+Returns JSON: {balancer, target, error?}; error is set when the core is not
+running, there is no such balancer, or no such outbound.
+
+Details: xray/balancer_override.go.
+ */
+FOUNDATION_EXPORT NSString* _Nonnull Libv2rayOverrideBalancer(NSString* _Nullable balancer, NSString* _Nullable target);
+
+/**
  * PprofEnabled возвращает false в релизе.
  */
 FOUNDATION_EXPORT BOOL Libv2rayPprofEnabled(void);
@@ -161,6 +194,14 @@ FOUNDATION_EXPORT NSString* _Nonnull Libv2rayStartPprof(long port);
 и вызывает новый RunXrayFromJSON. Возвращает "SUCCESS" или "FAILED: ..."
  */
 FOUNDATION_EXPORT NSString* _Nonnull Libv2rayStartV2RayWithConfig(NSString* _Nullable configJSON);
+
+/**
+ * StartV2RayWithConfigAndDatDir is StartV2RayWithConfig for a config whose
+rules read geodata: Xray takes geosite.dat and geoip.dat from datDir
+instead of the process's working directory, so an app need not change it.
+Returns "SUCCESS" or "FAILED: ...".
+ */
+FOUNDATION_EXPORT NSString* _Nonnull Libv2rayStartV2RayWithConfigAndDatDir(NSString* _Nullable configJSON, NSString* _Nullable datDir);
 
 /**
  * StopPprof в релизе ничего не делает.
